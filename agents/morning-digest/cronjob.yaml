@@ -1,0 +1,26 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: morning-digest
+  namespace: default
+spec:
+  schedule: "0 10 * * *"
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: morning-digest
+            image: ghcr.io/julianalvarez95/morning-digest:latest
+            envFrom:
+            - secretRef:
+                name: morning-digest-secrets
+            volumeMounts:
+            - name: feeds-config
+              mountPath: /config
+          volumes:
+          - name: feeds-config
+            configMap:
+              name: morning-digest-feeds

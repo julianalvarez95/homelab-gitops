@@ -1,0 +1,11 @@
+feeds:
+  - name: "Hacker News"
+    url: "https://news.ycombinator.com/rss"
+  - name: "TechCrunch"
+    url: "https://techcrunch.com/feed/"
+  - name: "Lenny's Newsletter"
+    url: "https://www.lennysnewsletter.com/feed"
+  - name: "Indie Hackers"
+    url: "https://www.indiehackers.com/feed.xml"
+  - name: "First Round Review"
+    url: "https://review.firstround.com/feed"
