@@ -100,15 +100,30 @@ def summarize(items):
 
 def send_telegram(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text})
+    resp = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text})
+    print(f"Telegram response: {resp.status_code} {resp.text}")
+    resp.raise_for_status()
 
 
 def main():
+    print("Buscando items de RSS...")
     rss_items = fetch_rss_items()
-    gmail_items = fetch_gmail_items()
+    print(f"RSS: {len(rss_items)} items encontrados")
+
+    print("Buscando items de Gmail...")
+    try:
+        gmail_items = fetch_gmail_items()
+        print(f"Gmail: {len(gmail_items)} items encontrados")
+    except Exception as e:
+        print(f"Error en Gmail: {e}")
+        gmail_items = []
+
     all_items = rss_items + gmail_items
+    print(f"Total items: {len(all_items)}. Resumiendo...")
     digest = summarize(all_items)
+    print(f"Digest generado ({len(digest)} caracteres). Enviando a Telegram...")
     send_telegram(f"📰 Resumen matutino\n\n{digest}")
+    print("Listo.")
 
 
 if __name__ == "__main__":
