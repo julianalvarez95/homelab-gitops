@@ -14,6 +14,7 @@ spec:
           containers:
           - name: morning-digest
             image: ghcr.io/julianalvarez95/morning-digest:latest
+            imagePullPolicy: Always
             envFrom:
             - secretRef:
                 name: morning-digest-secrets
