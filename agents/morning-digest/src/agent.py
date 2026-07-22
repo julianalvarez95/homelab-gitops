@@ -99,7 +99,8 @@ def summarize(items):
 
 
 def send_telegram(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    token = TELEGRAM_BOT_TOKEN.removeprefix("bot")
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
     resp = requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": text})
     print(f"Telegram response: {resp.status_code} {resp.text}")
     resp.raise_for_status()
