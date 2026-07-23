@@ -92,7 +92,7 @@ Telegram, con éxito/error en cada paso.
   - Persistencia: PVC de **3Gi** (las traces guardan texto completo de
     prompt/respuesta, pesan más que métricas puras).
   - Retención: configurar el límite de espacio/edad de Phoenix para
-    apuntar a ~14 días — verificar el nombre exacto de la env var
+    apuntar a ~10 días — verificar el nombre exacto de la env var
     (`PHOENIX_*`) contra la versión de imagen que se baje al
     implementar, porque cambió entre versiones de Phoenix.
   - Sin autenticación propia (confía en el perímetro de la LAN de casa,
@@ -114,6 +114,16 @@ Telegram, con éxito/error en cada paso.
     completo de una corrida sea navegable de punta a punta en la UI de
     Phoenix.
 
+**Telemetría debe fallar en modo abierto ("fail open").** Si Phoenix
+(o, en Fase 2, VictoriaMetrics) está caído o inalcanzable, el export
+OTLP y el `POST` de métricas deben loguear el error y seguir sin
+interrumpir la corrida — la entrega del digest a Telegram no puede
+depender de que la telemetría esté arriba. Esto es lo inverso del
+gotcha de `CLAUDE.md` sobre no fallar en silencio con Telegram: ahí el
+error real (la entrega) no debe tragarse; acá el error de telemetría sí
+se traga, porque es observabilidad, no el trabajo del agente. Aplica a
+las Fases 1 y 2 por igual.
+
 ## Fase 2 — VictoriaMetrics (métricas de costo y heartbeat)
 
 **Objetivo:** métricas time-series consultables (tokens totales por
@@ -123,7 +133,15 @@ para responder "¿cuánto gasté este mes?" y "¿corrió el cron hoy?".
 - `Deployment` single-node de `victoriametrics/victoria-metrics`,
   replica=1, en `observability`.
   - Persistencia: PVC de **2Gi**.
-  - Retención: `-retentionPeriod=14d`.
+  - Retención: `-retentionPeriod=10d`.
+  - **`-storage.minFreeDiskSpaceBytes` explícito y chico (ej. `1GB`).**
+    VictoriaMetrics pasa a modo solo-lectura (rechaza ingestas) cuando
+    el disco libre cae debajo de este umbral, y el default viene
+    pensado para discos grandes — con 12Gi libres en el node, dejarlo
+    en default probablemente tira la ingesta a modo solo-lectura casi
+    de entrada. Es el punto donde la restricción de disco de todo este
+    diseño podía morder sin avisar, así que va fijado explícito acá y
+    no se descubre en el deploy.
 - Al final de cada corrida, `agent.py` hace un `POST` a
   `http://victoria-metrics.observability.svc.cluster.local:8428/api/v1/import/prometheus`
   con líneas tipo:
@@ -162,9 +180,13 @@ sólo existe `kubectl top`, sin historial).
 
 Traefik `IngressRoute` (ya corre en `kube-system`) para:
 
-- `phoenix.homelab.local` → Service de Phoenix, puerto UI (6006).
-- `metrics.homelab.local` → Service de VictoriaMetrics, puerto `vmui`
+- `phoenix.homelab.internal` → Service de Phoenix, puerto UI (6006).
+- `metrics.homelab.internal` → Service de VictoriaMetrics, puerto `vmui`
   (8428).
+
+(`.internal` en vez de `.local` — este último es el dominio reservado
+para mDNS/Bonjour por RFC 6762 y puede resolver de forma rara del lado
+del cliente.)
 
 Ambos hostnames resuelven sólo dentro de la LAN de casa (entrada
 manual en `/etc/hosts` del lado cliente, o quien administre DNS local);
@@ -176,10 +198,19 @@ autenticación de aplicación).
 
 | Componente        | PVC   | Retención |
 |-------------------|-------|-----------|
-| Phoenix            | 3Gi   | ~14 días (a confirmar env var exacta) |
-| VictoriaMetrics    | 2Gi   | 14 días (`-retentionPeriod=14d`) |
+| Phoenix            | 3Gi   | ~10 días (a confirmar env var exacta) |
+| VictoriaMetrics    | 2Gi   | 10 días (`-retentionPeriod=10d`) |
 | node-exporter      | —     | (sin persistencia propia) |
 | **Total**          | 5Gi   | de 12Gi libres hoy |
+
+**El PVC es nominal, no un techo real.** `local-path-provisioner` es
+hostPath sobre el disco del node — un "PVC de 2Gi" no impide que
+VictoriaMetrics o Phoenix sigan escribiendo más allá de ese número. El
+único límite real de disco viene de `-retentionPeriod` (VM), la
+config de retención de Phoenix, y el guardrail de
+`-storage.minFreeDiskSpaceBytes` de la sección de Fase 2. La tabla es
+una estimación de uso esperado, no una garantía — no confiar en el
+"5Gi total" como cota dura.
 
 Deja ~7Gi de margen sobre el disco actual del node para el resto del
 cluster (imágenes de contenedores, logs, etc.) — ajustado pero
