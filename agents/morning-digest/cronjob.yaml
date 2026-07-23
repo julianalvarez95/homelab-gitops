@@ -20,7 +20,10 @@ spec:
                 name: morning-digest-secrets
             env:
             - name: PHOENIX_COLLECTOR_ENDPOINT
-              value: "phoenix.observability.svc.cluster.local:4317"
+              # Necesita el esquema explícito: sin "http://", phoenix.otel
+              # no puede inferir el protocolo y arma una URL rota
+              # (probado localmente, ver CLAUDE.md).
+              value: "http://phoenix.observability.svc.cluster.local:4317"
             - name: OTEL_EXPORTER_OTLP_TIMEOUT
               value: "2"
             volumeMounts:

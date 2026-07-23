@@ -103,6 +103,22 @@ change without a rebuild.
   Setting `OTEL_EXPORTER_OTLP_TIMEOUT=2` (env var on the CronJob) cut
   that to ~4.5s. A bare try/except around tracer *setup* does not bound
   this — the delay happens per span export at run time, not at setup.
+- **`PHOENIX_COLLECTOR_ENDPOINT` needs an explicit `http://` scheme.** A
+  bare `host:4317` value makes `phoenix.otel.register()` fail to infer
+  the transport protocol and build a broken URL
+  (`host://None:4317/4317`), silently falling back to HTTP instead of
+  gRPC. Always set it as `http://phoenix.observability.svc.cluster.local:4317`
+  (the `http://` prefix is correct even though the actual transport is
+  gRPC on that port).
+- **Naming a Kubernetes `Service` "phoenix" crashes the Phoenix
+  container on start.** Kubernetes auto-injects a `PHOENIX_PORT` env
+  var (`tcp://<ip>:6006` format, the legacy service-link convention)
+  into every pod in the namespace once that Service exists, which
+  collides with Phoenix's own `PHOENIX_PORT` config (expects a plain
+  integer) — `ValueError` at boot, straight from Phoenix's own code.
+  Fixed by setting `PHOENIX_PORT=6006` and `PHOENIX_GRPC_PORT=4317`
+  explicitly in the Phoenix `Deployment` env (see
+  `infra/phoenix/deployment.yaml`) to override the auto-injected value.
 
 ## Cluster-level notes
 
