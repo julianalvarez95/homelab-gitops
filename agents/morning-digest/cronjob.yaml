@@ -18,6 +18,11 @@ spec:
             envFrom:
             - secretRef:
                 name: morning-digest-secrets
+            env:
+            - name: PHOENIX_COLLECTOR_ENDPOINT
+              value: "phoenix.observability.svc.cluster.local:4317"
+            - name: OTEL_EXPORTER_OTLP_TIMEOUT
+              value: "2"
             volumeMounts:
             - name: feeds-config
               mountPath: /config

@@ -89,6 +89,20 @@ change without a rebuild.
   (`botbot123:...`). `send_telegram()` strips it defensively with
   `.removeprefix("bot")` — keep that in place, and expect the same class
   of copy-paste error from other API tokens.
+- **`openinference-instrumentation-openai==0.1.40` breaks with
+  `wrapt>=2`** — `TypeError: wrap_function_wrapper() got an unexpected
+  keyword argument 'module'`. An unpinned `wrapt` resolves to 2.x and
+  hits this immediately on `OpenAIInstrumentor().instrument(...)`.
+  Pinned `wrapt==1.17.3` in `requirements.txt` to fix it — same class of
+  incident as the `httpx`/`proxies` one above, verify transitive pins
+  again if these packages are ever bumped.
+- **Telemetry exports must fail open with a short timeout, not just a
+  try/except.** With Phoenix unreachable and no
+  `OTEL_EXPORTER_OTLP_TIMEOUT` set, three failed span exports added
+  ~22s to a local test run (each retries once with its own backoff).
+  Setting `OTEL_EXPORTER_OTLP_TIMEOUT=2` (env var on the CronJob) cut
+  that to ~4.5s. A bare try/except around tracer *setup* does not bound
+  this — the delay happens per span export at run time, not at setup.
 
 ## Cluster-level notes
 

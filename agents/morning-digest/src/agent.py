@@ -1,5 +1,6 @@
 import os
 import re
+from contextlib import nullcontext
 from html.parser import HTMLParser
 import feedparser
 import yaml
@@ -12,6 +13,25 @@ TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Tracing is best-effort: if Phoenix is unreachable or setup fails, the
+# digest still has to go out. `tracer` stays None and every span below
+# becomes a no-op via nullcontext().
+tracer = None
+try:
+    from phoenix.otel import register
+    from openinference.instrumentation.openai import OpenAIInstrumentor
+    from opentelemetry import trace
+
+    _tracer_provider = register(batch=False, project_name="morning-digest")
+    OpenAIInstrumentor().instrument(tracer_provider=_tracer_provider)
+    tracer = trace.get_tracer(__name__)
+except Exception as e:
+    print(f"Tracing no disponible, sigo sin instrumentación: {e}")
+
+
+def _span(name):
+    return tracer.start_as_current_span(name) if tracer else nullcontext()
 
 
 class _TextExtractor(HTMLParser):
@@ -182,16 +202,19 @@ def send_telegram(text):
 
 
 def main():
-    print("Buscando items de RSS...")
-    rss_items = fetch_rss_items()
-    print(f"RSS: {len(rss_items)} items encontrados")
+    with _span("morning_digest_run"):
+        print("Buscando items de RSS...")
+        with _span("fetch_rss"):
+            rss_items = fetch_rss_items()
+        print(f"RSS: {len(rss_items)} items encontrados")
 
-    all_items = rss_items
-    print(f"Total items: {len(all_items)}. Resumiendo...")
-    digest = summarize(all_items)
-    print(f"Digest generado ({len(digest)} caracteres). Enviando a Telegram...")
-    send_telegram(f"📰 Resumen matutino\n\n{digest}")
-    print("Listo.")
+        all_items = rss_items
+        print(f"Total items: {len(all_items)}. Resumiendo...")
+        digest = summarize(all_items)
+        print(f"Digest generado ({len(digest)} caracteres). Enviando a Telegram...")
+        with _span("send_telegram"):
+            send_telegram(f"📰 Resumen matutino\n\n{digest}")
+        print("Listo.")
 
 
 if __name__ == "__main__":
