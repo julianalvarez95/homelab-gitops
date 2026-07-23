@@ -41,6 +41,17 @@ spec:
               value: /mnt/data
             - name: PHOENIX_DEFAULT_RETENTION_POLICY_DAYS
               value: "10"
+            # Kubernetes auto-injects a PHOENIX_PORT env var of the form
+            # "tcp://<ip>:6006" into every pod once a Service named
+            # "phoenix" exists in the namespace, because it links every
+            # Service as <NAME>_PORT. Phoenix's own config expects
+            # PHOENIX_PORT/PHOENIX_GRPC_PORT to be plain integers, so this
+            # collision crashes the container on start unless overridden
+            # explicitly here.
+            - name: PHOENIX_PORT
+              value: "6006"
+            - name: PHOENIX_GRPC_PORT
+              value: "4317"
           volumeMounts:
             - name: phoenix-data
               mountPath: /mnt/data
