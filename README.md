@@ -176,7 +176,11 @@ homelab-gitops/
 
 - [x] Timezone del sistema fijado a `America/Argentina/Buenos_Aires` para
       que el CronJob dispare a la hora real esperada, no en UTC.
-- [ ] Observabilidad de agente (Arize Phoenix, liviano) para ver trazas
-      de cada corrida en vez de leer logs de Kubernetes a mano.
+- [x] Observabilidad (`infra/phoenix`, `infra/victoria-metrics`,
+      `infra/node-exporter`): tracing de cada corrida de agente
+      (Phoenix), métricas de costo/heartbeat por agente y salud del
+      node (VictoriaMetrics), todo fail-open — si la telemetría está
+      caída, el agente entrega igual. Detalle completo en
+      `docs/superpowers/specs/2026-07-23-telemetria-design.md`.
 - [ ] Más agentes bajo `agents/`, cada uno con su propia carpeta,
       Dockerfile, y CronJob — el patrón ya está probado y se repite.
