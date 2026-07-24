@@ -70,6 +70,7 @@ def fetch_rss_items(max_age_hours=24, max_items_per_feed=12):
                     continue
             feed_items.append((pub_dt, {
                 "source": feed["name"],
+                "category": feed.get("category", "tech"),
                 "title": entry.get("title", ""),
                 "summary": strip_html(entry.get("summary", ""))[:400],
                 "link": entry.get("link", ""),
@@ -93,6 +94,14 @@ Agrupá las noticias por tema (no por fuente) y priorizá lo más relevante;
 descartá lo irrelevante, duplicado o de bajo interés. Cubrí tantos temas
 como sea razonable dado el volumen de noticias, apuntando a un total de
 entre 600 y 800 palabras.
+
+Cada noticia viene etiquetada con su categoría entre corchetes (tech,
+agro, trading-ar, ai-observabilidad). Las fuentes en inglés de tech
+suelen ser más numerosas que las demás categorías — no dejes que ese
+volumen tape a las otras: si hay contenido relevante de agro, trading-ar
+o ai-observabilidad, asegurate de incluir al menos un bloque para cada
+una de esas categorías que tenga noticias ese día, aunque tech ocupe más
+bloques en total.
 
 FORMATO DE SALIDA (se envía con parse_mode=HTML de Telegram, que sólo
 soporta un subconjunto muy chico de HTML — cualquier etiqueta no permitida
@@ -123,7 +132,7 @@ def summarize(items):
         return "No hay novedades hoy.", 0
 
     content = "\n\n".join(
-        f"[{i['source']}] {i['title']}\n{i['summary']}\nLink: {i['link']}"
+        f"[{i['category']}][{i['source']}] {i['title']}\n{i['summary']}\nLink: {i['link']}"
         for i in items
     )
     response = client.chat.completions.create(
