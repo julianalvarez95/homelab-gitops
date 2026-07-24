@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: victoria-metrics-data
+  namespace: observability
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: victoria-metrics
+  namespace: observability
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: victoria-metrics
+  template:
+    metadata:
+      labels:
+        app: victoria-metrics
+    spec:
+      containers:
+        - name: victoria-metrics
+          image: victoriametrics/victoria-metrics:v1.148.0
+          args:
+            - -storageDataPath=/victoria-metrics-data
+            - -retentionPeriod=10d
+            # Default es 100MB; con solo ~11-12Gi libres en el node, se
+            # fija explícito y chico como guardrail (ver spec de
+            # telemetría) en vez de confiar en el default.
+            - -storage.minFreeDiskSpaceBytes=1GB
+          ports:
+            - name: http
+              containerPort: 8428
+          volumeMounts:
+            - name: victoria-metrics-data
+              mountPath: /victoria-metrics-data
+      volumes:
+        - name: victoria-metrics-data
+          persistentVolumeClaim:
+            claimName: victoria-metrics-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoria-metrics
+  namespace: observability
+spec:
+  selector:
+    app: victoria-metrics
+  ports:
+    - name: http
+      port: 8428
+      targetPort: http

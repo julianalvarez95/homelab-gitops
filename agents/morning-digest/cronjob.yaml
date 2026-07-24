@@ -26,6 +26,8 @@ spec:
               value: "http://phoenix.observability.svc.cluster.local:4317"
             - name: OTEL_EXPORTER_OTLP_TIMEOUT
               value: "2"
+            - name: VICTORIA_METRICS_URL
+              value: "http://victoria-metrics.observability.svc.cluster.local:8428/api/v1/import/prometheus"
             volumeMounts:
             - name: feeds-config
               mountPath: /config

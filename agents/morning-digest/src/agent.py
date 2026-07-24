@@ -1,5 +1,6 @@
 import os
 import re
+import time
 from contextlib import nullcontext
 from html.parser import HTMLParser
 import feedparser
@@ -11,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
+VICTORIA_METRICS_URL = os.environ.get("VICTORIA_METRICS_URL")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -118,7 +120,7 @@ hace que Telegram rechace el mensaje completo):
 
 def summarize(items):
     if not items:
-        return "No hay novedades hoy."
+        return "No hay novedades hoy.", 0
 
     content = "\n\n".join(
         f"[{i['source']}] {i['title']}\n{i['summary']}\nLink: {i['link']}"
@@ -131,7 +133,8 @@ def summarize(items):
             {"role": "user", "content": content},
         ],
     )
-    return response.choices[0].message.content
+    tokens = response.usage.total_tokens if response.usage else 0
+    return response.choices[0].message.content, tokens
 
 
 _ALLOWED_TAGS = {"b", "i", "u", "s", "a", "code", "pre"}
@@ -201,20 +204,45 @@ def send_telegram(text):
         resp.raise_for_status()
 
 
-def main():
-    with _span("morning_digest_run"):
-        print("Buscando items de RSS...")
-        with _span("fetch_rss"):
-            rss_items = fetch_rss_items()
-        print(f"RSS: {len(rss_items)} items encontrados")
+def push_metrics(success, duration, tokens):
+    # Igual que la telemetría de tracing: falla en modo abierto. Un
+    # VictoriaMetrics caído no puede tirar abajo la corrida del agente.
+    if not VICTORIA_METRICS_URL:
+        return
+    lines = "\n".join([
+        f'agent_run_success{{agent="morning-digest"}} {int(success)}',
+        f'agent_run_duration_seconds{{agent="morning-digest"}} {duration:.2f}',
+        f'agent_llm_tokens_total{{agent="morning-digest"}} {tokens}',
+        f'agent_last_run_timestamp_seconds{{agent="morning-digest"}} {int(time.time())}',
+    ])
+    try:
+        resp = requests.post(VICTORIA_METRICS_URL, data=lines, timeout=3)
+        print(f"VictoriaMetrics response: {resp.status_code} {resp.text}")
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"No se pudieron reportar métricas, sigo igual: {e}")
 
-        all_items = rss_items
-        print(f"Total items: {len(all_items)}. Resumiendo...")
-        digest = summarize(all_items)
-        print(f"Digest generado ({len(digest)} caracteres). Enviando a Telegram...")
-        with _span("send_telegram"):
-            send_telegram(f"📰 Resumen matutino\n\n{digest}")
-        print("Listo.")
+
+def main():
+    start = time.time()
+    success = False
+    tokens = 0
+    try:
+        with _span("morning_digest_run"):
+            print("Buscando items de RSS...")
+            with _span("fetch_rss"):
+                rss_items = fetch_rss_items()
+            print(f"RSS: {len(rss_items)} items encontrados")
+
+            print(f"Total items: {len(rss_items)}. Resumiendo...")
+            digest, tokens = summarize(rss_items)
+            print(f"Digest generado ({len(digest)} caracteres). Enviando a Telegram...")
+            with _span("send_telegram"):
+                send_telegram(f"📰 Resumen matutino\n\n{digest}")
+            print("Listo.")
+        success = True
+    finally:
+        push_metrics(success, time.time() - start, tokens)
 
 
 if __name__ == "__main__":
