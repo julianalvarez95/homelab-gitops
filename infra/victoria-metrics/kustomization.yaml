@@ -3,3 +3,9 @@ kind: Kustomization
 resources:
   - deployment.yaml
   - ingress.yaml
+configMapGenerator:
+  - name: victoria-metrics-scrape-config
+    files:
+      - scrape.yml
+generatorOptions:
+  disableNameSuffixHash: true

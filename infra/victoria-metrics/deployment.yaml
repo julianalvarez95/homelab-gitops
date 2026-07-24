@@ -38,16 +38,22 @@ spec:
             # fija explícito y chico como guardrail (ver spec de
             # telemetría) en vez de confiar en el default.
             - -storage.minFreeDiskSpaceBytes=1GB
+            - -promscrape.config=/etc/vm/scrape.yml
           ports:
             - name: http
               containerPort: 8428
           volumeMounts:
             - name: victoria-metrics-data
               mountPath: /victoria-metrics-data
+            - name: scrape-config
+              mountPath: /etc/vm
       volumes:
         - name: victoria-metrics-data
           persistentVolumeClaim:
             claimName: victoria-metrics-data
+        - name: scrape-config
+          configMap:
+            name: victoria-metrics-scrape-config
 ---
 apiVersion: v1
 kind: Service
