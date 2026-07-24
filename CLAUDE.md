@@ -132,6 +132,19 @@ change without a rebuild.
   a per-run gauge despite the `_total` suffix (spec-named, not a
   counter) — don't `rate()` it; use
   `sum_over_time(agent_llm_tokens_total[30d])` for a monthly cost view.
+- **`node-exporter`'s scrape config uses `static_configs` against the
+  Service DNS, not `kubernetes_sd_configs`** — deliberate, to avoid
+  wiring a ClusterRole/RBAC into VictoriaMetrics just to watch
+  endpoints on a single-node cluster. Consequence: the `instance` label
+  is pinned to `node-exporter.observability.svc.cluster.local:9100`,
+  not a per-node identity. Fine with one node — if a second node is
+  ever added, kube-proxy round-robins both node-exporter pods behind
+  that one Service VIP under the *same* `instance` label, producing one
+  flip-flopping series instead of two. At that point, switch the scrape
+  config (`infra/victoria-metrics/scrape.yml`) to
+  `kubernetes_sd_configs` with `role: node` (and give VictoriaMetrics
+  the RBAC to list/watch nodes) — the DaemonSet itself needs no change,
+  it's already correct per-node.
 
 ## Cluster-level notes
 
