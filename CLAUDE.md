@@ -119,6 +119,19 @@ change without a rebuild.
   Fixed by setting `PHOENIX_PORT=6006` and `PHOENIX_GRPC_PORT=4317`
   explicitly in the Phoenix `Deployment` env (see
   `infra/phoenix/deployment.yaml`) to override the auto-injected value.
+- **VictoriaMetrics instant queries (`/api/v1/query` at "now", including
+  the default query in `vmui`) go empty for most of the day.**
+  `morning-digest` pushes one sample per run, once a day. VictoriaMetrics'
+  default lookback for instant queries is ~5 minutes, so
+  `agent_last_run_timestamp_seconds` — the metric whose whole purpose is
+  "did it run today" — reads as no-data almost all the time even though
+  the series exists (`/api/v1/series` still finds it). This isn't
+  broken: use a **range/graph query** (e.g. last 7 days) to see the
+  points, or wrap in `last_over_time(metric[25h])` for an instant query
+  or any future alert expression. Also note `agent_llm_tokens_total` is
+  a per-run gauge despite the `_total` suffix (spec-named, not a
+  counter) — don't `rate()` it; use
+  `sum_over_time(agent_llm_tokens_total[30d])` for a monthly cost view.
 
 ## Cluster-level notes
 
