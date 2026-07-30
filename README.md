@@ -13,6 +13,7 @@
 | **Regla de oro** | Los cerebros van por API (OpenAI/Claude), el fierro local solo orquesta |
 | **Agentes corriendo** | 1 — `morning-digest` |
 | **Observabilidad** | Phoenix (tracing) + VictoriaMetrics (métricas) + node-exporter (salud del node) — las tres, fail-open |
+| **Red** | Pi-hole — DNS de toda la LAN, con bloqueo de ads/tracking a nivel de red |
 
 ## El loop completo
 
@@ -63,12 +64,22 @@ hardware que hay.
 | **`infra/phoenix`** | Tracing de cada corrida de agente: fetch de RSS → llamada a OpenAI (con tokens) → entrega a Telegram, como un único trace navegable de punta a punta. |
 | **`infra/victoria-metrics`** | Métricas de costo (tokens), duración y heartbeat por agente, más scrape de la salud del node. Retención corta (10 días), pensada para los ~12Gi libres de disco que tiene la 7490. |
 | **`infra/node-exporter`** | DaemonSet liviano que expone CPU/memoria/disco del node para que VictoriaMetrics los scrapee cada 30s — antes de esto, la única forma de ver esos números era `kubectl top`, sin historial. |
+| **`infra/pihole`** | DNS de toda la LAN: el router reparte esta IP como DNS por DHCP, y Pi-hole filtra ads/tracking antes de reenviar a resolvers públicos (`1.1.1.1`, `9.9.9.9` — nunca el router, para no crear un loop). Solo DNS, sin DHCP propio — el router sigue asignando IPs. |
 
-Ambas UIs (Phoenix y el `vmui` de VictoriaMetrics) quedan detrás de un
-`IngressRoute` de Traefik, resueltas solo dentro de la LAN de casa
-(`phoenix.homelab.internal`, `metrics.homelab.internal`) — sin
-exposición pública, sin TLS ni auth propios, mismo modelo de confianza
-que el resto del cluster.
+Ambas UIs de observabilidad (Phoenix y el `vmui` de VictoriaMetrics)
+más el panel de Pi-hole quedan detrás de un `IngressRoute` de Traefik,
+resueltos solo dentro de la LAN de casa (`phoenix.homelab.internal`,
+`metrics.homelab.internal`, `pihole.homelab.internal`) — sin exposición
+pública, sin TLS ni auth propios, mismo modelo de confianza que el
+resto del cluster. La excepción es el propio puerto 53 de Pi-hole, que
+sí necesita llegar a toda la LAN (no solo al cluster): se expone vía
+`hostPort` en el Deployment en vez de `hostNetwork`, porque k3s ya usa
+el 80/443 del node para Traefik y no hay MetalLB en este cluster.
+
+Una vez que Pi-hole sea el resolver de la LAN, sus "Local DNS Records"
+pueden servir los `*.homelab.internal` de arriba directamente — hoy
+cada máquina de la LAN los resuelve vía una entrada manual en
+`/etc/hosts`, un hack que Pi-hole puede retirar.
 
 ```mermaid
 flowchart TB
@@ -265,8 +276,12 @@ homelab-gitops/
 │   │   ├── ingress.yaml       # IngressRoute (metrics.homelab.internal)
 │   │   ├── scrape.yml         # scrape_config hacia node-exporter
 │   │   └── kustomization.yaml
-│   └── node-exporter/         # Fase 3: salud del node
-│       ├── daemonset.yaml     # DaemonSet + Service
+│   ├── node-exporter/         # Fase 3: salud del node
+│   │   ├── daemonset.yaml     # DaemonSet + Service
+│   │   └── kustomization.yaml
+│   └── pihole/                # DNS de toda la LAN
+│       ├── deployment.yaml    # Deployment (hostPort 53) + Service + PVC
+│       ├── ingress.yaml       # IngressRoute (pihole.homelab.internal)
 │       └── kustomization.yaml
 └── docs/
     └── superpowers/specs/     # specs de diseño (ej. telemetría)
@@ -290,3 +305,5 @@ los secrets.
       `docs/superpowers/specs/2026-07-23-telemetria-design.md`.
 - [ ] Más agentes bajo `agents/`, cada uno con su propia carpeta,
       Dockerfile, y CronJob — el patrón ya está probado y se repite.
+- [x] `infra/pihole`: DNS de toda la LAN con bloqueo de ads/tracking,
+      solo DNS (sin DHCP propio, el router sigue asignando IPs).

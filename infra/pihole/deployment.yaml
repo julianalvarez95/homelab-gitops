@@ -1,0 +1,84 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pihole-data
+  namespace: network
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 500Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pihole
+  namespace: network
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: pihole
+  template:
+    metadata:
+      labels:
+        app: pihole
+    spec:
+      dnsPolicy: Default
+      containers:
+        - name: pihole
+          image: pihole/pihole:2026.07.2
+          env:
+            - name: TZ
+              value: America/Argentina/Buenos_Aires
+            # Pi-hole v6: FTLCONF_* reemplaza a las env vars de v5
+            # (WEBPASSWORD, PIHOLE_DNS_1/2). Upstreams explícitos y
+            # nunca la IP del router, para no crear un loop DNS si el
+            # router llega a reenviar hacia Pi-hole.
+            - name: FTLCONF_dns_upstreams
+              value: |-
+                1.1.1.1
+                9.9.9.9
+          envFrom:
+            - secretRef:
+                name: pihole-secrets
+          ports:
+            - name: dns-udp
+              containerPort: 53
+              protocol: UDP
+              hostPort: 53
+            - name: dns-tcp
+              containerPort: 53
+              protocol: TCP
+              hostPort: 53
+            - name: web
+              containerPort: 80
+          volumeMounts:
+            - name: pihole-data
+              mountPath: /etc/pihole
+      volumes:
+        - name: pihole-data
+          persistentVolumeClaim:
+            claimName: pihole-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  # Nombre explícito (no "pihole" a secas): Kubernetes auto-inyecta
+  # <NOMBRE>_PORT a todo pod del namespace apenas existe un Service con
+  # ese nombre — mismo tipo de colisión que rompió a Phoenix con
+  # PHOENIX_PORT. FTL v6 solo lee vars FTLCONF_*, pero evitarlo es
+  # gratis.
+  name: pihole-web
+  namespace: network
+spec:
+  selector:
+    app: pihole
+  ports:
+    - name: web
+      port: 80
+      targetPort: web
