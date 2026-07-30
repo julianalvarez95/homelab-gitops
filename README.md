@@ -226,6 +226,43 @@ invierte: en vez de que el agente empuje datos (como en las Fases 1 y
 un proceso persistente, no un CronJob efímero.
 </details>
 
+<details>
+<summary><b>7. Pi-hole</b> — DNS de toda la LAN, no solo del cluster</summary>
+
+Hasta acá todo lo que corre en el cluster se consume solo desde adentro
+de la LAN vía `IngressRoute` — pero DNS es distinto: tiene que llegar a
+*cada* dispositivo de la red, no solo a quien le apunte a un hostname
+`*.homelab.internal`.
+
+**Por qué `hostPort` y no `hostNetwork`.** k3s ya usa el 80/443 del
+node para Traefik, y no hay MetalLB en este cluster (ningún Service
+`LoadBalancer` en todo el repo). Con `hostNetwork: true` el pod de
+Pi-hole heredaría la red del node entera y su panel web (puerto 80)
+chocaría con Traefik. La solución fue exponer *solo* el puerto 53
+(TCP+UDP) al host vía `hostPort` en el Deployment, dejando el panel web
+como cualquier otro servicio del repo: ClusterIP + `IngressRoute`.
+
+**Nunca el router como upstream.** `FTLCONF_dns_upstreams` apunta
+directo a `1.1.1.1`/`9.9.9.9`. Apuntar al router hubiera cerrado un
+loop (router → Pi-hole → router) que tumba la resolución DNS de toda la
+casa apenas alguien lo prueba.
+
+Dos bugs reales aparecieron recién al probar desde otro dispositivo de
+la LAN (ver tabla de baches abajo): `ufw` bloqueando el tráfico
+reenviado (`FORWARD`, no `INPUT`) hacia el pod, y FTL ignorando
+consultas que no vinieran de la subnet del propio CNI. Ninguno de los
+dos aparece probando desde el mismo node — hace falta un segundo
+dispositivo en la LAN para verlos.
+
+**Verificado end-to-end:** con el router (Technicolor DPC3848VE)
+repartiendo `192.168.0.214` como DNS por DHCP, un dispositivo real de
+la LAN resuelve dominios normales y bloquea dominios de tracking
+conocidos (`doubleclick.net` → `0.0.0.0`). El dashboard de Pi-hole
+muestra IPs de cliente distintas por dispositivo en vez de una sola IP
+genérica — confirma que el `hostPort` no está enmascarando el origen
+real de las consultas.
+</details>
+
 ## Los baches, porque son la parte que vale la pena releer
 
 Nada de esto salió andando a la primera, y está bien que así sea:
@@ -244,6 +281,8 @@ Nada de esto salió andando a la primera, y está bien que así sea:
 | **La UI de Phoenix no se veía desde otra máquina de la LAN** | `ufw` tiene política `DROP` por default y solo permitía explícitamente un puñado de puertos (SSH, 6443, 80, 443, 8080) — el 6006 del port-forward no estaba en la lista. | Resuelto de raíz con el `IngressRoute` de Traefik sobre el puerto 80 (ya permitido), en vez de abrir un puerto nuevo por cada UI. |
 | **Un feed RSS cortó la conexión a mitad de una corrida** | `RemoteDisconnected` real — la primera falla que el tracing nuevo capturó en producción, visible como un span con `status_code: ERROR` y el stack trace completo en Phoenix, en vez de perderse en logs de Kubernetes. | Sin arreglar a propósito: quedó como el primer caso real que demuestra por qué vale la pena tener tracing desde el día uno. |
 | **VictoriaMetrics "parece vacío" la mayor parte del día** | Con una sola muestra por corrida diaria, las queries instantáneas (incluida la que usa `vmui` por default) caen fuera del lookback de ~5 minutos y devuelven "sin datos", aunque la serie exista. | No es una falla: usar una query de rango (últimos 7 días) o `last_over_time(metric[25h])`. |
+| **Pi-hole no resolvía nada desde otro dispositivo de la LAN** | El tráfico DNAT del `hostPort` (host → pod) pasa por la cadena `FORWARD` de iptables, no por `INPUT` — `ufw allow 53/tcp` y `ufw allow 53/udp` no alcanzan porque esas reglas solo cubren `INPUT`. `DEFAULT_FORWARD_POLICY="DROP"` en `/etc/default/ufw` descartaba todo. | `DEFAULT_FORWARD_POLICY="ACCEPT"` + `ufw reload`. Aceptable en un node de un solo cluster sin nada más ruteando detrás. |
+| **Pi-hole seguía sin responder después de arreglar `ufw`** | El `dig` directo a la IP del pod funcionaba, pero desde la LAN seguía en timeout. El log de FTL lo decía explícito: `dnsmasq: ignoring query from non-local network 192.168.0.214` — el modo `listeningMode` default (`LOCAL`) solo responde a fuentes que la propia interfaz del pod reconoce como red local (la subnet del CNI), no la LAN real que llega vía `hostPort`. | `FTLCONF_dns_listeningMode=ALL`. Aceptable porque Pi-hole no tiene exposición pública, solo LAN. |
 
 Ninguno de estos errores fue exótico. Son los errores normales de armar
 infraestructura real: límites de API mal documentados, defaults de
