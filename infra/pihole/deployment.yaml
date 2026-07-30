@@ -43,6 +43,14 @@ spec:
               value: |-
                 1.1.1.1
                 9.9.9.9
+            # Default "LOCAL" solo responde a queries que la propia
+            # interfaz del pod reconoce como red local (la subnet del
+            # CNI, 10.42.0.0/16) — descarta todo lo que llega desde la
+            # LAN real vía hostPort ("ignoring query from non-local
+            # network", visto en los logs de FTL). "ALL" es aceptable
+            # acá porque Pi-hole no tiene exposición pública, solo LAN.
+            - name: FTLCONF_dns_listeningMode
+              value: "ALL"
           envFrom:
             - secretRef:
                 name: pihole-secrets
