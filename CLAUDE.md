@@ -155,6 +155,19 @@ helpers, extract them then, not before.
   `kubernetes_sd_configs` with `role: node` (and give VictoriaMetrics
   the RBAC to list/watch nodes) — the DaemonSet itself needs no change,
   it's already correct per-node.
+- **VictoriaMetrics has a `-search.latencyOffset` (~30s) write-visibility
+  delay, distinct from the ~5min lookback gotcha above.** A query issued
+  within ~30s of a push can return stale/prior data even when wrapped in
+  `last_over_time(...)`, simply because not enough real time has passed
+  since the last write for it to become visible to reads. Found while
+  live-verifying `agents/watchdog`'s state machine: firing two manual
+  test runs ~15-17s apart (much closer together than the real `*/10`
+  schedule) produced one duplicate FIRING notification, because the
+  second run's state read didn't yet see the first run's state write.
+  Not a bug in the state machine — at the real 10-minute cadence this
+  window is a non-issue. When manually triggering runs back-to-back to
+  test alerting logic, space them out by at least ~30-45s, and don't
+  trust a read-after-write inside that window as evidence of anything.
 
 ## Cluster-level notes
 
