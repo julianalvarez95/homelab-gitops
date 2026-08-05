@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: watchdog
+  namespace: default
+spec:
+  schedule: "*/10 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 120
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          containers:
+          - name: watchdog
+            image: ghcr.io/julianalvarez95/watchdog:latest
+            imagePullPolicy: Always
+            envFrom:
+            - secretRef:
+                name: watchdog-secrets
+            env:
+            - name: VICTORIA_METRICS_URL
+              value: "http://victoria-metrics.observability.svc.cluster.local:8428/api/v1/import/prometheus"
+            - name: VICTORIA_METRICS_QUERY_URL
+              value: "http://victoria-metrics.observability.svc.cluster.local:8428/api/v1/query"
+            volumeMounts:
+            - name: rules-config
+              mountPath: /config
+          volumes:
+          - name: rules-config
+            configMap:
+              name: watchdog-rules

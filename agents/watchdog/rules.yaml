@@ -1,0 +1,35 @@
+rules:
+  - name: disk_low
+    query: 'node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}'
+    comparator: lt
+    threshold: 2147483648  # 2Gi
+    for_seconds: 600  # requiere que siga por debajo del umbral en la corrida siguiente (~10 min)
+    message: "Disco libre por debajo de 2Gi en /"
+
+  - name: memory_low
+    query: 'node_memory_MemAvailable_bytes'
+    comparator: lt
+    threshold: 1610612736  # 1.5Gi
+    for_seconds: 600
+    message: "Memoria disponible por debajo de 1.5Gi"
+
+  - name: load_high
+    query: 'node_load5 / count(count by (cpu) (node_cpu_seconds_total{job="node-exporter"}))'
+    comparator: gt
+    threshold: 1.5
+    for_seconds: 600
+    message: "Load promedio (5 min) por núcleo por encima de 1.5"
+
+  - name: digest_stale
+    query: 'time() - last_over_time(agent_last_run_timestamp_seconds{agent="morning-digest"}[48h])'
+    comparator: gt
+    threshold: 93600  # 26h
+    for_seconds: 0  # dispara en la primera observación: una corrida diaria ya es una señal agregada
+    message: "morning-digest no corrió en más de 26hs"
+
+  - name: digest_failed
+    query: 'last_over_time(agent_run_success{agent="morning-digest"}[48h])'
+    comparator: eq
+    threshold: 0
+    for_seconds: 0
+    message: "La última corrida de morning-digest falló"
