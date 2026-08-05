@@ -11,7 +11,7 @@
 | **SO** | Debian 13, mínimo, sin entorno gráfico |
 | **Orquestador** | k3s (un solo nodo) + ArgoCD (self-heal on) |
 | **Regla de oro** | Los cerebros van por API (OpenAI/Claude), el fierro local solo orquesta |
-| **Agentes corriendo** | 1 — `morning-digest` |
+| **Agentes corriendo** | 2 — `morning-digest`, `watchdog` |
 | **Observabilidad** | Phoenix (tracing) + VictoriaMetrics (métricas) + node-exporter (salud del node) — las tres, fail-open |
 | **Red** | Pi-hole — DNS de toda la LAN, con bloqueo de ads/tracking a nivel de red |
 
@@ -61,6 +61,7 @@ hardware que hay.
 | **k3s** | Kubernetes de un solo nodo, liviano, con Traefik y SQLite incluidos. Nada de etcd ni HA — no hace falta para un nodo. |
 | **ArgoCD** | El corazón operativo. Vigila este repo y aplica cualquier cambio al cluster automáticamente, con self-heal activado. |
 | **`agents/morning-digest`** | El primer agente real: un CronJob diario que lee feeds RSS (tech, producto, negocios), arma un resumen con OpenAI agrupado por tema, y lo manda por Telegram con formato (negritas, bullets, link a cada noticia). Corre, resume, se apaga — nada queda vivo consumiendo RAM entre corrida y corrida. |
+| **`agents/watchdog`** | El segundo agente: un CronJob cada 10 minutos que evalúa reglas de alerta (disco, memoria, load, salud de `morning-digest`) contra VictoriaMetrics y avisa por Telegram solo en cambios de estado reales — sin LLM, con máquina de estados propia (pending → firing, histéresis, dedup) para no mandar spam. |
 | **`infra/phoenix`** | Tracing de cada corrida de agente: fetch de RSS → llamada a OpenAI (con tokens) → entrega a Telegram, como un único trace navegable de punta a punta. |
 | **`infra/victoria-metrics`** | Métricas de costo (tokens), duración y heartbeat por agente, más scrape de la salud del node. Retención corta (10 días), pensada para los ~12Gi libres de disco que tiene la 7490. |
 | **`infra/node-exporter`** | DaemonSet liviano que expone CPU/memoria/disco del node para que VictoriaMetrics los scrapee cada 30s — antes de esto, la única forma de ver esos números era `kubectl top`, sin historial. |
@@ -263,6 +264,59 @@ genérica — confirma que el `hostPort` no está enmascarando el origen
 real de las consultas.
 </details>
 
+<details>
+<summary><b>8. El segundo agente: watchdog</b> — alertas proactivas, no un chatbot</summary>
+
+Con un solo agente (`morning-digest`) y observabilidad completa, la
+pregunta natural era qué hacer con el resto de la 7490. Se descartaron
+un bot conversacional y RAG por no aportar disciplina nueva; se eligió
+en cambio un **watchdog**: un agente que vigila las métricas que ya
+existen y avisa por Telegram solo cuando algo cambia de estado de
+verdad — el objetivo explícito era aprender alerting real (umbrales,
+histéresis, deduplicación, evitar spam), no solo mover datos de un
+lado a otro.
+
+- **CronJob con máquina de estados propia, no vmalert+Alertmanager.**
+  Un stack estándar hubiera resuelto esto con menos código, pero
+  también hubiera escondido justo la parte que se quería aprender.
+  vmalert+Alertmanager queda como camino de graduación futuro cuando
+  el número de reglas crezca (~8-10).
+- **Sin LLM.** El texto de cada alerta es un template fijo por regla —
+  determinístico, nada que pueda fallar o alucinar justo cuando todo lo
+  demás ya está roto. "Watchdog" vigila al agente LLM (`morning-digest`),
+  no llama a uno.
+- **Estado en VictoriaMetrics, no un PVC nuevo.** Reusa la infra que ya
+  existe (el disco es la restricción más ajustada del node) y de yapa
+  da gráficos de historial de alertas gratis en `vmui`.
+- **Tres estados por regla:** `0` inactivo, `1` pending (condición
+  verdadera pero todavía no confirmada), `2` firing. Pasar de `1` a `2`
+  exige que la condición siga verdadera en la corrida siguiente
+  (`for_seconds`, ~10 min para las reglas de disco/memoria/load) —
+  eso es la histéresis, para no alertar por un pico de un segundo.
+  Mientras el estado se mantiene en `2` no se vuelve a notificar (el
+  dedup), y si nunca pasó de `1` la resolución es silenciosa: no se
+  había avisado nada, así que tampoco hay nada que resolver en voz alta.
+- **Lecturas fail-closed, escrituras fail-open.** Si falla el *push* de
+  una métrica se loguea y se sigue (mismo criterio que el resto del
+  repo). Pero si falla la *lectura* del estado previo de una regla, esa
+  regla se saltea esa corrida entera en vez de asumir "inactivo" —
+  asumir inactivo con VictoriaMetrics caída convertiría justo esa caída
+  en una ráfaga de falsos positivos, el spam que este agente existe
+  para evitar.
+- **Código de Telegram/métricas duplicado a propósito, no compartido.**
+  `watchdog` copia `send_telegram`, `sanitize_telegram_html` y
+  `push_metrics` casi textual desde `morning-digest` en vez de extraer
+  un módulo común — dos agentes no justifican esa capa. El disparador
+  para extraer `agents/_shared/` queda en el tercer agente, documentado
+  en `CLAUDE.md`.
+
+Verificado en vivo contra el cluster real: se forzó el umbral de
+`disk_low` a un valor absurdo, se dispararon corridas manuales, y se
+confirmó la secuencia completa `0 → 1 → 2 (FIRING, un solo mensaje) →
+2 (sin renotificar) → 0 (RESOLVED)` en Telegram y en los gráficos de
+`vmui`, antes de revertir el umbral a su valor real.
+</details>
+
 ## Los baches, porque son la parte que vale la pena releer
 
 Nada de esto salió andando a la primera, y está bien que así sea:
@@ -283,6 +337,7 @@ Nada de esto salió andando a la primera, y está bien que así sea:
 | **VictoriaMetrics "parece vacío" la mayor parte del día** | Con una sola muestra por corrida diaria, las queries instantáneas (incluida la que usa `vmui` por default) caen fuera del lookback de ~5 minutos y devuelven "sin datos", aunque la serie exista. | No es una falla: usar una query de rango (últimos 7 días) o `last_over_time(metric[25h])`. |
 | **Pi-hole no resolvía nada desde otro dispositivo de la LAN** | El tráfico DNAT del `hostPort` (host → pod) pasa por la cadena `FORWARD` de iptables, no por `INPUT` — `ufw allow 53/tcp` y `ufw allow 53/udp` no alcanzan porque esas reglas solo cubren `INPUT`. `DEFAULT_FORWARD_POLICY="DROP"` en `/etc/default/ufw` descartaba todo. | `DEFAULT_FORWARD_POLICY="ACCEPT"` + `ufw reload`. Aceptable en un node de un solo cluster sin nada más ruteando detrás. |
 | **Pi-hole seguía sin responder después de arreglar `ufw`** | El `dig` directo a la IP del pod funcionaba, pero desde la LAN seguía en timeout. El log de FTL lo decía explícito: `dnsmasq: ignoring query from non-local network 192.168.0.214` — el modo `listeningMode` default (`LOCAL`) solo responde a fuentes que la propia interfaz del pod reconoce como red local (la subnet del CNI), no la LAN real que llega vía `hostPort`. | `FTLCONF_dns_listeningMode=ALL`. Aceptable porque Pi-hole no tiene exposición pública, solo LAN. |
+| **`watchdog` mandó un FIRING duplicado al probar la máquina de estados** | Dos corridas manuales disparadas ~15-17s aparte (mucho más pegadas que el schedule real de 10 min) pisaron el `-search.latencyOffset` de VictoriaMetrics (~30s): la segunda corrida leyó el estado *previo* a que la primera lo escribiera. No era un bug de la lógica de estados. | Nada que arreglar en el código — al cadence real de `*/10 * * * *` la ventana no aplica. Documentado en `CLAUDE.md` para no repetir el susto probando a mano. |
 
 Ninguno de estos errores fue exótico. Son los errores normales de armar
 infraestructura real: límites de API mal documentados, defaults de
@@ -297,12 +352,20 @@ significa "funcionó".
 homelab-gitops/
 ├── apps/                     # reservado para el patrón app-of-apps a futuro
 ├── agents/
-│   └── morning-digest/
+│   ├── morning-digest/
+│   │   ├── src/
+│   │   │   ├── agent.py
+│   │   │   └── requirements.txt
+│   │   ├── Dockerfile
+│   │   ├── feeds.yaml
+│   │   ├── cronjob.yaml
+│   │   └── kustomization.yaml
+│   └── watchdog/
 │       ├── src/
 │       │   ├── agent.py
 │       │   └── requirements.txt
 │       ├── Dockerfile
-│       ├── feeds.yaml
+│       ├── rules.yaml
 │       ├── cronjob.yaml
 │       └── kustomization.yaml
 ├── infra/
@@ -342,7 +405,11 @@ los secrets.
       node (VictoriaMetrics), todo fail-open — si la telemetría está
       caída, el agente entrega igual. Detalle completo en
       `docs/superpowers/specs/2026-07-23-telemetria-design.md`.
-- [ ] Más agentes bajo `agents/`, cada uno con su propia carpeta,
-      Dockerfile, y CronJob — el patrón ya está probado y se repite.
 - [x] `infra/pihole`: DNS de toda la LAN con bloqueo de ads/tracking,
       solo DNS (sin DHCP propio, el router sigue asignando IPs).
+- [x] `agents/watchdog`: segundo agente, alertas proactivas sobre disco,
+      memoria, load y salud de `morning-digest`, con máquina de estados
+      propia (pending → firing, histéresis, dedup) y sin LLM. Verificado
+      en vivo contra el cluster real.
+- [ ] Más agentes bajo `agents/`, cada uno con su propia carpeta,
+      Dockerfile, y CronJob — el patrón ya está probado y se repite.
