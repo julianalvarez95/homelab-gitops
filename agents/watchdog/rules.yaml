@@ -2,7 +2,7 @@ rules:
   - name: disk_low
     query: 'node_filesystem_avail_bytes{mountpoint="/",fstype!~"tmpfs|overlay|squashfs"}'
     comparator: lt
-    threshold: 100000000000  # TEST: 93Gi, garantiza "por debajo" para probar la máquina de estados
+    threshold: 2147483648  # 2Gi
     for_seconds: 600  # requiere que siga por debajo del umbral en la corrida siguiente (~10 min)
     message: "Disco libre por debajo de 2Gi en /"
 
