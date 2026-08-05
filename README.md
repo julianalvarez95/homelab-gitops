@@ -14,6 +14,7 @@
 | **Agentes corriendo** | 2 — `morning-digest`, `watchdog` |
 | **Observabilidad** | Phoenix (tracing) + VictoriaMetrics (métricas) + node-exporter (salud del node) — las tres, fail-open |
 | **Red** | Pi-hole — DNS de toda la LAN, con bloqueo de ads/tracking a nivel de red |
+| **Acceso remoto** | Tailscale (mesh WireGuard) — homelab, desktop y celular en el mismo tailnet, SSH sin exponer puertos al router |
 
 ## El loop completo
 
@@ -317,6 +318,45 @@ confirmó la secuencia completa `0 → 1 → 2 (FIRING, un solo mensaje) →
 `vmui`, antes de revertir el umbral a su valor real.
 </details>
 
+<details>
+<summary><b>9. Tailscale</b> — acceso remoto entre homelab, desktop y celular, sin exponer nada al router</summary>
+
+Hasta acá el acceso a la 7490 dependía de estar en la misma LAN (SSH por
+IP local) o de exponer puertos en el router — ninguna de las dos escala
+bien para conectar el desktop y el celular desde fuera de casa.
+Tailscale arma una mesh WireGuard entre los tres dispositivos, cada uno
+con una IP fija en `100.64.0.0/10` (CGNAT), sin abrir nada hacia
+internet.
+
+**Verificado antes de instalar: no choca con Pi-hole.** Pi-hole corre en
+el cluster, no como servicio nativo del host — el `Deployment` expone el
+53 vía `hostPort` (ver sección 7), que Kubernetes implementa como DNAT
+de iptables, no como un socket real del host. `ss -tuln | grep :53` no
+muestra ningún proceso escuchando a nivel de host, así que el `tailscaled`
+del homelab no compite por el puerto. De yapa, Tailscale suma una
+interfaz más (`tailscale0`) por la que Pi-hole podría eventualmente
+servir DNS también a dispositivos remotos — pendiente de decidir si se
+configura el "Global nameserver" del tailnet apuntando a la IP Tailscale
+del homelab.
+
+**Instalación, igual en las tres máquinas Linux/homelab y desktop:**
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --ssh
+```
+
+`--ssh` habilita el SSH nativo de Tailscale (autenticado por identidad
+del tailnet, no por clave), sumado al SSH por clave que ya existía
+(sección 2) — no lo reemplaza. En el celular fue instalar la app oficial
+de la App Store y loguear con la misma cuenta.
+
+**MagicDNS**, activado después desde el panel de admin
+(`login.tailscale.com/admin/dns`), resuelve el nombre de cada dispositivo
+sin tocar nada en las máquinas: `ssh usainbot@homelab` en vez de
+`ssh usainbot@100.102.169.46`.
+</details>
+
 ## Los baches, porque son la parte que vale la pena releer
 
 Nada de esto salió andando a la primera, y está bien que así sea:
@@ -338,6 +378,7 @@ Nada de esto salió andando a la primera, y está bien que así sea:
 | **Pi-hole no resolvía nada desde otro dispositivo de la LAN** | El tráfico DNAT del `hostPort` (host → pod) pasa por la cadena `FORWARD` de iptables, no por `INPUT` — `ufw allow 53/tcp` y `ufw allow 53/udp` no alcanzan porque esas reglas solo cubren `INPUT`. `DEFAULT_FORWARD_POLICY="DROP"` en `/etc/default/ufw` descartaba todo. | `DEFAULT_FORWARD_POLICY="ACCEPT"` + `ufw reload`. Aceptable en un node de un solo cluster sin nada más ruteando detrás. |
 | **Pi-hole seguía sin responder después de arreglar `ufw`** | El `dig` directo a la IP del pod funcionaba, pero desde la LAN seguía en timeout. El log de FTL lo decía explícito: `dnsmasq: ignoring query from non-local network 192.168.0.214` — el modo `listeningMode` default (`LOCAL`) solo responde a fuentes que la propia interfaz del pod reconoce como red local (la subnet del CNI), no la LAN real que llega vía `hostPort`. | `FTLCONF_dns_listeningMode=ALL`. Aceptable porque Pi-hole no tiene exposición pública, solo LAN. |
 | **`watchdog` mandó un FIRING duplicado al probar la máquina de estados** | Dos corridas manuales disparadas ~15-17s aparte (mucho más pegadas que el schedule real de 10 min) pisaron el `-search.latencyOffset` de VictoriaMetrics (~30s): la segunda corrida leyó el estado *previo* a que la primera lo escribiera. No era un bug de la lógica de estados. | Nada que arreglar en el código — al cadence real de `*/10 * * * *` la ventana no aplica. Documentado en `CLAUDE.md` para no repetir el susto probando a mano. |
+| **`tailscale up --ssh` se colgaba sin mostrar la URL de login en el desktop** | `tailscaled` quedaba reintentando `bootstrapDNS` contra varios hosts de DERP sin avanzar. `resolvectl status` mostró que Cloudflare WARP tenía el scope `+DefaultRoute` de DNS con un stub local (`127.0.2.2`/`127.0.2.3`), y `dig login.tailscale.com` devolvía IPs `192.200.0.x` — fake-IPs sintéticas de WARP, no la IP real del control plane de Tailscale. | `warp-cli disconnect` antes de `tailscale up --ssh`. Para correr ambos en simultáneo a futuro, excluir el rango CGNAT de Tailscale del túnel de WARP: `warp-cli tunnel host add 100.64.0.0/10`. |
 
 Ninguno de estos errores fue exótico. Son los errores normales de armar
 infraestructura real: límites de API mal documentados, defaults de
@@ -411,5 +452,11 @@ los secrets.
       memoria, load y salud de `morning-digest`, con máquina de estados
       propia (pending → firing, histéresis, dedup) y sin LLM. Verificado
       en vivo contra el cluster real.
+- [x] Tailscale: mesh WireGuard entre homelab, desktop y celular, con
+      SSH nativo (`--ssh`) y MagicDNS. Verificado sin conflicto con
+      Pi-hole (el 53 del pod es `hostPort`/DNAT, no un socket del host).
+- [ ] Decidir si el "Global nameserver" del tailnet apunta a la IP
+      Tailscale del homelab, para que el bloqueo de Pi-hole aplique
+      también al celular fuera de la LAN (datos móviles).
 - [ ] Más agentes bajo `agents/`, cada uno con su propia carpeta,
       Dockerfile, y CronJob — el patrón ya está probado y se repite.
