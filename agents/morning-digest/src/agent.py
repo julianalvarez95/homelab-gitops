@@ -5,9 +5,12 @@ from contextlib import nullcontext
 from html.parser import HTMLParser
 import feedparser
 import yaml
+from bs4 import BeautifulSoup
 from openai import OpenAI
 import requests
 from datetime import datetime, timedelta, timezone
+
+REDDIT_USER_AGENT = "homelab-morning-digest/1.0"
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -52,6 +55,106 @@ def strip_html(raw_html):
     return re.sub(r"\s+", " ", "".join(parser.chunks)).strip()
 
 
+def _fetch_rss(feed, cutoff):
+    parsed = feedparser.parse(feed["url"])
+    feed_items = []
+    for entry in parsed.entries:
+        published = entry.get("published_parsed")
+        pub_dt = None
+        if published:
+            pub_dt = datetime(*published[:6], tzinfo=timezone.utc)
+            if pub_dt < cutoff:
+                continue
+        feed_items.append((pub_dt, {
+            "source": feed["name"],
+            "category": feed.get("category", "tech"),
+            "title": entry.get("title", ""),
+            "summary": strip_html(entry.get("summary", ""))[:400],
+            "link": entry.get("link", ""),
+        }))
+    return feed_items
+
+
+def _fetch_reddit(feed, cutoff):
+    try:
+        resp = requests.get(
+            feed["url"],
+            headers={"User-Agent": REDDIT_USER_AGENT},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        posts = resp.json()["data"]["children"]
+    except Exception as e:
+        print(f"Reddit ({feed['name']}) falló, la salteo: {e}")
+        return []
+
+    feed_items = []
+    for child in posts:
+        post = child.get("data", {})
+        created = post.get("created_utc")
+        pub_dt = datetime.fromtimestamp(created, tz=timezone.utc) if created else None
+        if pub_dt and pub_dt < cutoff:
+            continue
+
+        if post.get("is_self"):
+            link = f"https://www.reddit.com{post.get('permalink', '')}"
+            summary = strip_html(post.get("selftext", ""))[:400]
+        else:
+            link = post.get("url", "")
+            summary = ""
+
+        feed_items.append((pub_dt, {
+            "source": feed["name"],
+            "category": feed.get("category", "tech"),
+            "title": post.get("title", ""),
+            "summary": summary,
+            "link": link,
+        }))
+    return feed_items
+
+
+def _fetch_github_trending(feed, cutoff):
+    try:
+        resp = requests.get(feed["url"], timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+        articles = soup.select("article.Box-row")
+    except Exception as e:
+        print(f"GitHub Trending ({feed['name']}) falló, la salteo: {e}")
+        return []
+
+    feed_items = []
+    for article in articles:
+        link_tag = article.select_one("h2 a[href]")
+        if not link_tag:
+            continue
+        repo = link_tag["href"].strip("/")
+
+        desc_tag = article.select_one("p.col-9")
+        description = desc_tag.get_text(strip=True) if desc_tag else ""
+        lang_tag = article.select_one('span[itemprop="programmingLanguage"]')
+        language = lang_tag.get_text(strip=True) if lang_tag else ""
+        stars_tag = article.select_one("span.float-sm-right")
+        stars_today = stars_tag.get_text(strip=True) if stars_tag else ""
+
+        summary = " · ".join(p for p in (description, language, stars_today) if p)
+        feed_items.append((None, {
+            "source": feed["name"],
+            "category": feed.get("category", "tech"),
+            "title": repo,
+            "summary": summary[:400],
+            "link": f"https://github.com/{repo}",
+        }))
+    return feed_items
+
+
+_FETCHERS = {
+    "rss": _fetch_rss,
+    "reddit": _fetch_reddit,
+    "github_trending": _fetch_github_trending,
+}
+
+
 def fetch_rss_items(max_age_hours=24, max_items_per_feed=12):
     with open("/config/feeds.yaml") as f:
         feeds = yaml.safe_load(f)["feeds"]
@@ -59,22 +162,12 @@ def fetch_rss_items(max_age_hours=24, max_items_per_feed=12):
     cutoff = datetime.now(timezone.utc) - timedelta(hours=max_age_hours)
     items = []
     for feed in feeds:
-        parsed = feedparser.parse(feed["url"])
-        feed_items = []
-        for entry in parsed.entries:
-            published = entry.get("published_parsed")
-            pub_dt = None
-            if published:
-                pub_dt = datetime(*published[:6], tzinfo=timezone.utc)
-                if pub_dt < cutoff:
-                    continue
-            feed_items.append((pub_dt, {
-                "source": feed["name"],
-                "category": feed.get("category", "tech"),
-                "title": entry.get("title", ""),
-                "summary": strip_html(entry.get("summary", ""))[:400],
-                "link": entry.get("link", ""),
-            }))
+        feed_type = feed.get("type", "rss")
+        fetch = _FETCHERS.get(feed_type)
+        if fetch is None:
+            print(f"Tipo de fuente desconocido '{feed_type}' en '{feed['name']}', la salteo")
+            continue
+        feed_items = fetch(feed, cutoff)
 
         dated = sorted(
             (pair for pair in feed_items if pair[0] is not None),
