@@ -39,23 +39,6 @@ feeds:
     url: "https://opentelemetry.io/blog/index.xml"
     category: "ai-observabilidad"
 
-  - name: "r/programming"
-    url: "https://www.reddit.com/r/programming/top.json?t=day&limit=15"
-    category: "tech"
-    type: reddit
-  - name: "r/MachineLearning"
-    url: "https://www.reddit.com/r/MachineLearning/top.json?t=day&limit=15"
-    category: "tech"
-    type: reddit
-  - name: "r/LocalLLaMA"
-    url: "https://www.reddit.com/r/LocalLLaMA/top.json?t=day&limit=15"
-    category: "tech"
-    type: reddit
-  - name: "r/selfhosted"
-    url: "https://www.reddit.com/r/selfhosted/top.json?t=day&limit=15"
-    category: "tech"
-    type: reddit
-
   - name: "GitHub Trending"
     url: "https://github.com/trending?since=daily"
     category: "tech"
