@@ -16,6 +16,8 @@ OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 VICTORIA_METRICS_URL = os.environ.get("VICTORIA_METRICS_URL")
+DIGEST_AGENT_URL = os.environ.get("DIGEST_AGENT_URL", "https://digest-agent.vercel.app/ingest")
+DIGEST_INGEST_SECRET = os.environ.get("DIGEST_INGEST_SECRET")
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
@@ -254,6 +256,25 @@ def sanitize_telegram_html(text):
     return _TAG_RE.sub(_replace, text)
 
 
+# Matches the bullet format the SYSTEM_PROMPT requires:
+# • <a href="LINK">Título</a>: comentario
+# Reused to feed digest-agent the same items that went out to Telegram,
+# instead of re-summarizing the raw RSS items a second time.
+_BULLET_RE = re.compile(r'•\s*<a href="([^"]+)">(.*?)</a>:\s*(.*?)(?=\n•|\n\n|\Z)', re.DOTALL)
+
+
+def extract_digest_items(digest_text, source_by_link):
+    items = []
+    for link, headline, summary in _BULLET_RE.findall(digest_text):
+        items.append({
+            "headline": re.sub(r"\s+", " ", headline).strip(),
+            "summary": re.sub(r"\s+", " ", summary).strip(),
+            "source": source_by_link.get(link, "morning-digest"),
+            "url": link,
+        })
+    return items
+
+
 def _pack(pieces, max_chars, separator):
     chunks = []
     current = ""
@@ -325,8 +346,28 @@ def push_metrics(success, duration, tokens):
         print(f"No se pudieron reportar métricas, sigo igual: {e}")
 
 
+def push_portfolio_digest(generated_at, items):
+    # Igual que tracing/push_metrics: mejor esfuerzo. El digest de Telegram
+    # ya salió para cuando esto corre, así que digest-agent caído o el
+    # secret sin configurar no puede tirar abajo la corrida.
+    if not DIGEST_INGEST_SECRET or not items:
+        return
+    try:
+        resp = requests.post(
+            DIGEST_AGENT_URL,
+            json={"generatedAt": generated_at, "items": items},
+            headers={"X-Digest-Secret": DIGEST_INGEST_SECRET},
+            timeout=10,
+        )
+        print(f"digest-agent response: {resp.status_code} {resp.text}")
+        resp.raise_for_status()
+    except Exception as e:
+        print(f"No se pudo publicar el digest en digest-agent, sigo igual: {e}")
+
+
 def main():
     start = time.time()
+    generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     success = False
     tokens = 0
     try:
@@ -342,6 +383,11 @@ def main():
             with _span("send_telegram"):
                 send_telegram(f"📰 Resumen matutino\n\n{digest}")
             print("Listo.")
+
+            with _span("push_portfolio_digest"):
+                source_by_link = {item["link"]: item["source"] for item in rss_items}
+                portfolio_items = extract_digest_items(digest, source_by_link)
+                push_portfolio_digest(generated_at, portfolio_items)
         success = True
     finally:
         push_metrics(success, time.time() - start, tokens)

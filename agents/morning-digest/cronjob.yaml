@@ -28,6 +28,8 @@ spec:
               value: "2"
             - name: VICTORIA_METRICS_URL
               value: "http://victoria-metrics.observability.svc.cluster.local:8428/api/v1/import/prometheus"
+            - name: DIGEST_AGENT_URL
+              value: "https://digest-agent.vercel.app/ingest"
             volumeMounts:
             - name: feeds-config
               mountPath: /config
