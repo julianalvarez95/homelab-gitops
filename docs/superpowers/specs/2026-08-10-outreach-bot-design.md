@@ -158,6 +158,34 @@ respuesta) y devuelve 200 OK a Kapso al final. A esta escala (una
 abogada, contactos determinados, no volumen masivo) no hace falta
 cola/procesamiento async.
 
+**Interfaz de `llm.py`** — se evaluó usar un framework de orquestación
+de agentes (LangGraph, Hermes, Eve de Vercel, Cloudflare Agents) y se
+descartó: Eve y Cloudflare Agents están atados a runtimes propios
+(Vercel Sandbox/Workflow SDK, Durable Objects de Cloudflare) que no
+aplican a un cluster propio; Hermes y Paperclip son control-planes
+multi-agente (memoria persistente, gateways multi-canal, gestión de
+equipos) — mucho más de lo que hace falta para una sola conversación
+por contacto. LangGraph encaja mejor (Python, self-hostable) pero
+agregaría un grafo de nodos/checkpointer para un estado que ya vive en
+la Sheet (`status`) y en el historial que guarda Kapso — mismo
+criterio YAGNI que el resto del repo (ver `CLAUDE.md`).
+
+`llm.py` queda como una función pura, sin framework:
+
+```python
+def decide(contact: dict, history: list[dict]) -> Decision:
+    # arma el system prompt (calificar y cerrar con reunión introductoria)
+    # una sola llamada al LLM, tope duro de 10 mensajes de historial
+    # parsea la respuesta a Decision (action, reply_text, reasoning)
+    ...
+```
+
+`Decision` tiene `action: "reply" | "close" | "handoff" | "reject"`,
+`reply_text` y `reasoning` (para log/trace en Phoenix). `webhook.py` es
+el único lugar con lógica de control — despacha según `action` con un
+`match`, sin estado propio más allá de lo que ya lee/escribe en la
+Sheet y en Kapso.
+
 ## Manejo de errores
 
 - **Kapso API caída o rate-limited**: no se actualiza `status` en la
