@@ -1,0 +1,54 @@
+name: outreach-bot
+
+on:
+  push:
+    paths:
+      - "agents/outreach-bot/**"
+      - "agents/_shared/**"
+      - ".github/workflows/outreach-bot.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r agents/outreach-bot/src/requirements-dev.txt
+      - run: pip install ruff
+      - run: ruff check agents/outreach-bot/src
+      - run: cd agents/outreach-bot && python -m pytest tests/ -v
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: agents/outreach-bot/Dockerfile
+          push: false
+
+  push:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: agents/outreach-bot/Dockerfile
+          push: true
+          tags: ghcr.io/julianalvarez95/outreach-bot:latest

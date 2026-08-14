@@ -1,0 +1,28 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: outreach-bot-sender
+  namespace: default
+spec:
+  schedule: "0 9 * * 1-5"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          containers:
+          - name: outreach-bot-sender
+            image: ghcr.io/julianalvarez95/outreach-bot:latest
+            imagePullPolicy: Always
+            envFrom:
+            - secretRef:
+                name: outreach-bot-secrets
+            env:
+            - name: VICTORIA_METRICS_URL
+              value: "http://victoria-metrics.observability.svc.cluster.local:8428/api/v1/import/prometheus"

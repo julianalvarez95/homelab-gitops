@@ -1726,3 +1726,89 @@ Confirm you receive the WhatsApp template on your own phone (the test contact fr
 **Placeholder scan:** no TBD/TODO; every step has runnable code or an exact command with an expected result.
 
 **Type consistency:** `Decision(action, reply_text, reasoning)` defined in Task 4 is used identically in Task 6's tests and implementation. `sheets_client` row dicts always carry `row_number` (Task 2) and are consumed that way in Tasks 5–6. `kapso_client.get_history` returns `{"role", "content"}` dicts consumed identically by `llm.decide`'s `history` parameter (Task 4) and `webhook.py`'s cap check (Task 6).
+
+## Implementation notes (2026-08-14)
+
+Tasks 1–9 executed; all 32 `outreach-bot` tests + 9 shared-module tests
+pass, both Dockerfile entrypoints smoke-tested, k8s manifests validated
+with `kubectl kustomize .`. Task 10 is unstarted (operational, needs the
+user's own accounts). Real deviations from this plan as written:
+
+- **Task 1 didn't happen as specified.** `outreach-bot` is agent #3, which
+  triggers the extraction rule `CLAUDE.md` already documented ("revisit
+  at agent #3"). `telegram.py` (`send_telegram`, `sanitize_telegram_html`,
+  `split_telegram_message`, `push_metrics`) now lives in
+  `agents/_shared/telegram.py`, tested once in `agents/_shared/tests/`,
+  imported by all three agents (`morning-digest`, `watchdog`,
+  `outreach-bot`). This moved every agent's Docker build context to the
+  repo root (`docker build -f agents/<name>/Dockerfile .`, not from the
+  agent's own directory) — `morning-digest`/`watchdog` Dockerfiles and
+  `CLAUDE.md` were updated to match, and `outreach-bot`'s `Dockerfile`/CI
+  workflow were written against the root-context convention from the
+  start rather than the plan's original single-directory build.
+- **Task 3's `kapso_client.py` used a different, doc-verified API surface.**
+  The plan's `/marketing_messages` endpoint doesn't appear anywhere in
+  `docs.kapso.ai` — every verified example sends templates through the
+  same `/messages` endpoint as text (`type: "template"` vs `type:
+  "text"`), which is what's implemented. `get_history` also doesn't match
+  the plan's single `/platform/v1/whatsapp/messages?phone_number=`
+  endpoint (never found in docs either); implemented as a two-step call
+  instead — `GET /platform/v1/whatsapp/conversations?phone_number=` to
+  resolve the conversation id, then `GET .../messages?conversation_id=`
+  — matching the TS SDK's `listByConversation` wrapper, the closest
+  verified equivalent. This second part still needs a live check against
+  a real Kapso sandbox before Task 10's rollout: no REST (non-SDK)
+  example of filtering `/messages` by `conversation_id` was found in the
+  docs, only the SDK method's parameter name.
+- **Task 6 had a real bug, fixed.** `webhook.py`'s context-cap branch
+  built the fallback decision via `llm.Decision(...)`, but
+  `test_context_cap_forces_handoff_without_calling_llm` patches
+  `webhook.llm` wholesale — so `llm.Decision` was a `MagicMock`, `.action`
+  never equalled `"handoff"`, and `_dispatch` silently no-opped. Fixed by
+  `from llm import Decision` as a separate name, unaffected by patching
+  `llm`. Added a `test_outbound_status_event_is_ignored` case: Kapso posts
+  every message-event subtype (`sent`/`delivered`/`read`/`failed`, not
+  just `received`) to the same webhook URL — the existing
+  `direction != "inbound"` filter already handles this correctly (an
+  event about our own outbound message always carries
+  `kapso.direction: "outbound"`), it just wasn't covered by a test.
+- **Task 9's CI workflow context was wrong** for the same reason as Task
+  1 — `context: agents/outreach-bot` can't reach
+  `agents/_shared/telegram.py`. Changed to `context: .` +
+  `file: agents/outreach-bot/Dockerfile`, and the trigger's `paths:` now
+  also watches `agents/_shared/**`.
+- **Added `agents/outreach-bot/ruff.toml`** (not in the plan). Ruff 0.16
+  enables a much larger rule set than the classic pyflakes/pycodestyle
+  default once it finds no config at all — it flagged blind-except
+  (`BLE001`) on every deliberate fail-open `except Exception` in
+  `sender.py`/`webhook.py`, which is this repo's documented error-handling
+  convention (see `CLAUDE.md`), not a bug. Pinned to
+  `select = ["E4", "E7", "E9", "F"]` so CI lints for real bugs.
+
+Not yet done, not attempted: Task 10 in full (Google Sheet + service
+account, Kapso template submission/approval, Cloudflare Tunnel, k8s
+secret, end-to-end test with a real phone number) — every step needs the
+user's own external accounts and can't be scripted.
+
+Two more fixes made after a second review pass, neither in the plan:
+
+- **`webhook.py` was blocking its own event loop.** `handle_webhook` was
+  `async def` but every call inside it (`requests`, `gspread`, the sync
+  `openai` client) is blocking I/O — during a single message (~3-6s:
+  2 Kapso GETs + Sheets read + LLM + Kapso send) `/healthz` couldn't be
+  served at all, which fails the readiness/liveness probes under real
+  traffic bursts (template blast at 9am → replies arriving together) and
+  can restart the pod mid-conversation. Fixed by verifying the signature
+  in the async handler, then handing everything else to
+  `starlette.concurrency.run_in_threadpool`. Verified live (not just by
+  the diff): mocked a 6s downstream call, ran real uvicorn, fired
+  `/webhook` and `/healthz` concurrently — `/healthz` returned in 0.00s
+  while the webhook request was still mid-flight. All 32 tests
+  unaffected (`_signed_post` signs the same bytes `json.loads` parses).
+- **`sender.send_followups` had no guard for a missing/malformed
+  `last_update`.** `_days_since` calls `strptime` unconditionally; a
+  human hand-editing the Sheet (clearing a cell, resetting someone to
+  `sent`) crashes the whole follow-up sweep with an uncaught
+  `ValueError`. Since the Sheet is the human-facing control surface here,
+  added `if not contact.get("last_update"): continue` before the date
+  check, in both loops.

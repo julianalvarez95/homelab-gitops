@@ -1,0 +1,27 @@
+# El tunnel token remoto (TUNNEL_TOKEN) viene del secret outreach-bot-secrets.
+# El mapeo hostname público -> Service interno se configura en el dashboard
+# de Cloudflare Zero Trust (Task 10 del plan), no en git — mismo criterio
+# que el resto de los secretos de este repo.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: outreach-bot-cloudflared
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: outreach-bot-cloudflared
+  template:
+    metadata:
+      labels:
+        app: outreach-bot-cloudflared
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: cloudflared
+        image: cloudflare/cloudflared:2025.7.0
+        args: ["tunnel", "--no-autoupdate", "run"]
+        envFrom:
+        - secretRef:
+            name: outreach-bot-secrets

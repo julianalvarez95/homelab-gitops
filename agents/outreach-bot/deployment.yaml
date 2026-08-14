@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: outreach-bot-webhook
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: outreach-bot-webhook
+  template:
+    metadata:
+      labels:
+        app: outreach-bot-webhook
+    spec:
+      automountServiceAccountToken: false
+      containers:
+      - name: outreach-bot-webhook
+        image: ghcr.io/julianalvarez95/outreach-bot:latest
+        imagePullPolicy: Always
+        command: ["python", "-m", "uvicorn", "webhook:app", "--host", "0.0.0.0", "--port", "8000"]
+        ports:
+        - containerPort: 8000
+        envFrom:
+        - secretRef:
+            name: outreach-bot-secrets
+        env:
+        - name: PHOENIX_COLLECTOR_ENDPOINT
+          value: "http://phoenix.observability.svc.cluster.local:4317"
+        - name: OTEL_EXPORTER_OTLP_TIMEOUT
+          value: "2"
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 3
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: 8000
+          initialDelaySeconds: 10

@@ -1,0 +1,7 @@
+[lint]
+# Ruff 0.16 enables a much larger rule set than the classic "E4,E7,E9,F"
+# default once it can't find any config at all. Pinned explicitly here so CI
+# lints for real bugs, not style opinions — BLE001 (blind except) in
+# particular fights this repo's documented fail-open/log-and-continue
+# pattern (see CLAUDE.md), used deliberately throughout sender.py/webhook.py.
+select = ["E4", "E7", "E9", "F"]
