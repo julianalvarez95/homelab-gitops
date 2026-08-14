@@ -8,14 +8,12 @@ import yaml
 from bs4 import BeautifulSoup
 from openai import OpenAI
 import requests
+import telegram
 from datetime import datetime, timedelta, timezone
 
 REDDIT_USER_AGENT = "homelab-morning-digest/1.0"
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
-TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
-TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
-VICTORIA_METRICS_URL = os.environ.get("VICTORIA_METRICS_URL")
 DIGEST_AGENT_URL = os.environ.get("DIGEST_AGENT_URL", "https://digest-agent.vercel.app/ingest")
 DIGEST_INGEST_SECRET = os.environ.get("DIGEST_INGEST_SECRET")
 
@@ -241,21 +239,6 @@ def summarize(items):
     return response.choices[0].message.content, tokens
 
 
-_ALLOWED_TAGS = {"b", "i", "u", "s", "a", "code", "pre"}
-_TAG_RE = re.compile(r"</?([a-zA-Z0-9]+)[^>]*>")
-_BR_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-
-
-def sanitize_telegram_html(text):
-    text = _BR_RE.sub("\n", text)
-
-    def _replace(match):
-        tag = match.group(1).lower()
-        return match.group(0) if tag in _ALLOWED_TAGS else ""
-
-    return _TAG_RE.sub(_replace, text)
-
-
 # Matches the bullet format the SYSTEM_PROMPT requires:
 # • <a href="LINK">Título</a>: comentario
 # Reused to feed digest-agent the same items that went out to Telegram,
@@ -273,77 +256,6 @@ def extract_digest_items(digest_text, source_by_link):
             "url": link,
         })
     return items
-
-
-def _pack(pieces, max_chars, separator):
-    chunks = []
-    current = ""
-    for piece in pieces:
-        candidate = f"{current}{separator}{piece}" if current else piece
-        if len(candidate) <= max_chars:
-            current = candidate
-        else:
-            if current:
-                chunks.append(current)
-            current = piece
-    if current:
-        chunks.append(current)
-    return chunks
-
-
-def split_telegram_message(text, max_chars=3500):
-    if len(text) <= max_chars:
-        return [text]
-
-    chunks = []
-    for block in _pack(text.split("\n\n"), max_chars, "\n\n"):
-        if len(block) <= max_chars:
-            chunks.append(block)
-            continue
-        # a single topic-block still overflows: fall back to bullet lines
-        for sub in _pack(block.split("\n"), max_chars, "\n"):
-            if len(sub) <= max_chars:
-                chunks.append(sub)
-            else:
-                # a single line has no more separators: hard-slice as a
-                # last resort so this never recurses/loops indefinitely
-                chunks.extend(
-                    sub[i:i + max_chars] for i in range(0, len(sub), max_chars)
-                )
-    return chunks
-
-
-def send_telegram(text):
-    token = TELEGRAM_BOT_TOKEN.removeprefix("bot")
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
-    sanitized = sanitize_telegram_html(text)
-    for chunk in split_telegram_message(sanitized):
-        resp = requests.post(url, json={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": chunk,
-            "parse_mode": "HTML",
-        })
-        print(f"Telegram response: {resp.status_code} {resp.text}")
-        resp.raise_for_status()
-
-
-def push_metrics(success, duration, tokens):
-    # Igual que la telemetría de tracing: falla en modo abierto. Un
-    # VictoriaMetrics caído no puede tirar abajo la corrida del agente.
-    if not VICTORIA_METRICS_URL:
-        return
-    lines = "\n".join([
-        f'agent_run_success{{agent="morning-digest"}} {int(success)}',
-        f'agent_run_duration_seconds{{agent="morning-digest"}} {duration:.2f}',
-        f'agent_llm_tokens_total{{agent="morning-digest"}} {tokens}',
-        f'agent_last_run_timestamp_seconds{{agent="morning-digest"}} {int(time.time())}',
-    ])
-    try:
-        resp = requests.post(VICTORIA_METRICS_URL, data=lines, timeout=3)
-        print(f"VictoriaMetrics response: {resp.status_code} {resp.text}")
-        resp.raise_for_status()
-    except Exception as e:
-        print(f"No se pudieron reportar métricas, sigo igual: {e}")
 
 
 def push_portfolio_digest(generated_at, items):
@@ -381,7 +293,7 @@ def main():
             digest, tokens = summarize(rss_items)
             print(f"Digest generado ({len(digest)} caracteres). Enviando a Telegram...")
             with _span("send_telegram"):
-                send_telegram(f"📰 Resumen matutino\n\n{digest}")
+                telegram.send_telegram(f"📰 Resumen matutino\n\n{digest}")
             print("Listo.")
 
             with _span("push_portfolio_digest"):
@@ -390,7 +302,12 @@ def main():
                 push_portfolio_digest(generated_at, portfolio_items)
         success = True
     finally:
-        push_metrics(success, time.time() - start, tokens)
+        telegram.push_metrics([
+            f'agent_run_success{{agent="morning-digest"}} {int(success)}',
+            f'agent_run_duration_seconds{{agent="morning-digest"}} {time.time() - start:.2f}',
+            f'agent_llm_tokens_total{{agent="morning-digest"}} {tokens}',
+            f'agent_last_run_timestamp_seconds{{agent="morning-digest"}} {int(time.time())}',
+        ])
 
 
 if __name__ == "__main__":

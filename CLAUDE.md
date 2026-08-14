@@ -32,9 +32,13 @@ CronJobs that call out to a hosted LLM, do their work, and exit.
 There is no CI yet — images are built and pushed manually from the
 cluster host, then ArgoCD picks up the CronJob change from Git.
 
+Agents build from the **repo root**, not their own directory — every
+agent's `Dockerfile` `COPY`s `agents/_shared/telegram.py` alongside its
+own `src/`, so the build context has to reach both:
+
 ```bash
-# from an agent's directory, e.g. agents/morning-digest
-docker build -t ghcr.io/julianalvarez95/morning-digest:latest .
+# from the repo root
+docker build -f agents/morning-digest/Dockerfile -t ghcr.io/julianalvarez95/morning-digest:latest .
 docker push ghcr.io/julianalvarez95/morning-digest:latest
 ```
 
@@ -74,14 +78,17 @@ Config that isn't a secret (e.g. `feeds.yaml`) is mounted from a
 change without a rebuild.
 
 **Telegram/metrics helper code (`send_telegram`, `sanitize_telegram_html`,
-`split_telegram_message`, `push_metrics`) is intentionally duplicated
-between agents, not shared.** `agents/watchdog` (agent #2) copies these
-near-verbatim from `agents/morning-digest` rather than factoring out a
-shared module — each agent has its own Docker build context today, and
-extracting `agents/_shared/` at 2 agents would be the same
+`split_telegram_message`, `push_metrics`) lives in `agents/_shared/telegram.py`,
+shared across agents.** It stayed duplicated through agent #2
+(`watchdog` copied it near-verbatim from `morning-digest`) on purpose —
+extracting a shared module at 2 agents would've been the same
 over-engineering call already deferred once for SOPS (see Secrets,
-below). Revisit at **agent #3**: if a third agent needs the same
-helpers, extract them then, not before.
+below). Extracted at **agent #3** (`outreach-bot`) per that same rule.
+Every agent's `Dockerfile` does `COPY agents/_shared/telegram.py .`
+alongside its own `src/agent.py`/`src/*.py`, so `import telegram` works
+uniformly — this is *why* the build context moved to the repo root (see
+"Building and deploying an agent" above). Nothing else is shared: each
+agent still has its own `requirements.txt`, own tests, own manifests.
 
 ### Known gotchas worth remembering when touching agent code
 
