@@ -1,0 +1,634 @@
+<title>Latitude Fleet</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #f7f8f6;
+    --surface: #ffffff;
+    --surface-sunken: #eef0ed;
+    --border: #dde2de;
+    --text: #14181a;
+    --text-muted: #5b6660;
+    --text-faint: #8a938d;
+    --accent: #3a5ba0;
+    --ok: #1f8a53;
+    --ok-bg: #e6f4ec;
+    --warn: #b8791a;
+    --warn-bg: #fbf1e0;
+    --crit: #c23b3b;
+    --crit-bg: #fbe9e9;
+    --shadow: 0 1px 2px rgb(20 24 26 / 0.04), 0 1px 8px rgb(20 24 26 / 0.03);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0c1210;
+      --surface: #131a17;
+      --surface-sunken: #0f1513;
+      --border: #232b27;
+      --text: #e7ece8;
+      --text-muted: #8a978f;
+      --text-faint: #5e6a63;
+      --accent: #86aae3;
+      --ok: #3fcf87;
+      --ok-bg: #16281f;
+      --warn: #e2a94a;
+      --warn-bg: #2c2413;
+      --crit: #e5776e;
+      --crit-bg: #2c1717;
+      --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 10px rgb(0 0 0 / 0.25);
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0c1210;
+    --surface: #131a17;
+    --surface-sunken: #0f1513;
+    --border: #232b27;
+    --text: #e7ece8;
+    --text-muted: #8a978f;
+    --text-faint: #5e6a63;
+    --accent: #86aae3;
+    --ok: #3fcf87;
+    --ok-bg: #16281f;
+    --warn: #e2a94a;
+    --warn-bg: #2c2413;
+    --crit: #e5776e;
+    --crit-bg: #2c1717;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 1px 10px rgb(0 0 0 / 0.25);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .mono {
+    font-family: "IBM Plex Mono", ui-monospace, "SF Mono", monospace;
+    font-variant-numeric: tabular-nums;
+  }
+
+  a { color: var(--accent); }
+  a:focus-visible, button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  .page {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+  }
+
+  /* ---- top strip ---- */
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    padding-bottom: 1.75rem;
+    border-bottom: 1px solid var(--border);
+    margin-bottom: 2rem;
+  }
+
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    letter-spacing: 0.01em;
+  }
+
+  .brand-mark {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    background: var(--accent);
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+  }
+
+  .brand-mark svg { width: 13px; height: 13px; stroke: white; }
+
+  .brand-name { color: var(--text); }
+  .brand-sub { color: var(--text-faint); font-weight: 400; }
+
+  .env-pill {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 0.72rem;
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 0.25rem 0.65rem;
+    white-space: nowrap;
+  }
+
+  /* ---- status headline ---- */
+  .status-block { margin-bottom: 2.75rem; }
+
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .pulse-dot {
+    position: relative;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--ok);
+    flex-shrink: 0;
+  }
+
+  .pulse-dot::after {
+    content: "";
+    position: absolute;
+    inset: -6px;
+    border-radius: 50%;
+    border: 1.5px solid var(--ok);
+    opacity: 0.5;
+    animation: pulse 2.4s ease-out infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pulse-dot::after { animation: none; display: none; }
+  }
+
+  @keyframes pulse {
+    0% { transform: scale(0.6); opacity: 0.6; }
+    100% { transform: scale(1.9); opacity: 0; }
+  }
+
+  h1 {
+    font-size: 1.7rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .status-sub {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin: 0;
+    padding-left: 1.35rem;
+  }
+
+  .status-sub .mono { color: var(--text-faint); }
+
+  /* ---- section headers ---- */
+  .section-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 0.9rem;
+  }
+
+  .section-head h2 {
+    font-size: 0.85rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-muted);
+    margin: 0;
+  }
+
+  .section-head .count {
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    font-family: "IBM Plex Mono", monospace;
+  }
+
+  section { margin-bottom: 2.5rem; }
+
+  /* ---- agent grid ---- */
+  .agent-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.85rem;
+  }
+
+  @media (max-width: 620px) {
+    .agent-grid { grid-template-columns: 1fr; }
+  }
+
+  .agent-card {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.1rem 1rem 1.3rem;
+    box-shadow: var(--shadow);
+  }
+
+  .agent-card::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 10px;
+    bottom: 10px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--stripe, var(--ok));
+  }
+
+  .agent-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.7rem;
+  }
+
+  .agent-name {
+    font-weight: 600;
+    font-size: 0.92rem;
+  }
+
+  .agent-role {
+    display: block;
+    font-weight: 400;
+    font-size: 0.78rem;
+    color: var(--text-faint);
+    margin-top: 0.1rem;
+  }
+
+  .status-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.72rem;
+    font-weight: 500;
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .status-chip.ok { color: var(--ok); background: var(--ok-bg); }
+  .status-chip.warn { color: var(--warn); background: var(--warn-bg); }
+  .status-chip.crit { color: var(--crit); background: var(--crit-bg); }
+
+  .status-chip svg { width: 11px; height: 11px; }
+
+  .agent-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 0.6rem;
+    padding-top: 0.7rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .stat-label {
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-faint);
+    margin-bottom: 0.2rem;
+  }
+
+  .stat-value {
+    font-size: 0.85rem;
+    font-weight: 500;
+  }
+
+  /* ---- alerts panel ---- */
+  .alert-panel {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.95rem 1.1rem;
+    box-shadow: var(--shadow);
+  }
+
+  .alert-panel.calm { color: var(--text-muted); }
+
+  .alert-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 7px;
+    background: var(--ok-bg);
+    color: var(--ok);
+    display: grid;
+    place-items: center;
+    flex-shrink: 0;
+  }
+
+  .alert-icon svg { width: 15px; height: 15px; }
+
+  .alert-text strong { font-weight: 600; color: var(--text); }
+  .alert-text .mono { color: var(--text-faint); font-size: 0.82rem; }
+
+  /* ---- outreach stats ---- */
+  .stat-strip {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 0.85rem;
+  }
+
+  @media (max-width: 620px) {
+    .stat-strip { grid-template-columns: 1fr 1fr; }
+  }
+
+  .stat-tile {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    box-shadow: var(--shadow);
+  }
+
+  .stat-tile .stat-value {
+    font-size: 1.35rem;
+    font-family: "IBM Plex Mono", monospace;
+    font-weight: 500;
+    display: block;
+    margin-bottom: 0.15rem;
+  }
+
+  .stat-tile .stat-label { font-size: 0.7rem; }
+
+  /* ---- footer ---- */
+  footer {
+    padding-top: 1.75rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+    color: var(--text-faint);
+    font-size: 0.78rem;
+  }
+
+  footer a { color: var(--text-muted); text-decoration: none; }
+  footer a:hover { color: var(--accent); }
+</style>
+
+<div class="page">
+
+  <div class="topbar">
+    <div class="brand">
+      <span class="brand-mark">
+        <svg viewBox="0 0 24 24" fill="none" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17V7l8-4 8 4v10l-8 4-8-4Z"/><path d="M4 7l8 4 8-4M12 11v10"/></svg>
+      </span>
+      <span class="brand-name">Latitude Fleet</span>
+      <span class="brand-sub">&middot; agent status</span>
+    </div>
+    <span class="env-pill">k3s &middot; single node</span>
+  </div>
+
+  <div class="status-block">
+    <div class="status-row">
+      <span class="pulse-dot"></span>
+      <h1>All agents operational</h1>
+    </div>
+    <p class="status-sub">4 of 4 healthy &middot; snapshot <span class="mono">2026-08-19 14:32 ART</span></p>
+  </div>
+
+  <section aria-labelledby="agents-head">
+    <div class="section-head">
+      <h2 id="agents-head">Agents</h2>
+      <span class="count">4 total</span>
+    </div>
+    <div class="agent-grid">
+
+      <div class="agent-card" style="--stripe: var(--ok)">
+        <div class="agent-top">
+          <span class="agent-name">morning-digest
+            <span class="agent-role">RSS digest &rarr; Telegram, daily</span>
+          </span>
+          <span class="status-chip ok">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>
+            ok
+          </span>
+        </div>
+        <div class="agent-stats">
+          <div>
+            <div class="stat-label">Last run</div>
+            <div class="stat-value mono">27m ago</div>
+          </div>
+          <div>
+            <div class="stat-label">Duration</div>
+            <div class="stat-value mono">14.2s</div>
+          </div>
+          <div>
+            <div class="stat-label">Tokens / 30d</div>
+            <div class="stat-value mono">48.1k</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="agent-card" style="--stripe: var(--ok)">
+        <div class="agent-top">
+          <span class="agent-name">watchdog
+            <span class="agent-role">Health check, every 10 min</span>
+          </span>
+          <span class="status-chip ok">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>
+            ok
+          </span>
+        </div>
+        <div class="agent-stats">
+          <div>
+            <div class="stat-label">Last run</div>
+            <div class="stat-value mono">6m ago</div>
+          </div>
+          <div>
+            <div class="stat-label">Duration</div>
+            <div class="stat-value mono">1.9s</div>
+          </div>
+          <div>
+            <div class="stat-label">Tokens / 30d</div>
+            <div class="stat-value mono">0</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="agent-card" style="--stripe: var(--ok)">
+        <div class="agent-top">
+          <span class="agent-name">outreach-bot
+            <span class="agent-role">WhatsApp legal outreach, hourly</span>
+          </span>
+          <span class="status-chip ok">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>
+            ok
+          </span>
+        </div>
+        <div class="agent-stats">
+          <div>
+            <div class="stat-label">Last run</div>
+            <div class="stat-value mono">42m ago</div>
+          </div>
+          <div>
+            <div class="stat-label">Duration</div>
+            <div class="stat-value mono">38.7s</div>
+          </div>
+          <div>
+            <div class="stat-label">Tokens / 30d</div>
+            <div class="stat-value mono">112.4k</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="agent-card" style="--stripe: var(--ok)">
+        <div class="agent-top">
+          <span class="agent-name">metrics-snapshot
+            <span class="agent-role">Publishes this page's data</span>
+          </span>
+          <span class="status-chip ok">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>
+            ok
+          </span>
+        </div>
+        <div class="agent-stats">
+          <div>
+            <div class="stat-label">Last run</div>
+            <div class="stat-value mono">3m ago</div>
+          </div>
+          <div>
+            <div class="stat-label">Duration</div>
+            <div class="stat-value mono">1.6s</div>
+          </div>
+          <div>
+            <div class="stat-label">Tokens / 30d</div>
+            <div class="stat-value mono">0</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  <section aria-labelledby="alerts-head">
+    <div class="section-head">
+      <h2 id="alerts-head">Alerts</h2>
+    </div>
+    <div class="alert-panel calm">
+      <span class="alert-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 13l4 4L19 7"/></svg>
+      </span>
+      <div class="alert-text">
+        <strong>No active alerts.</strong>
+        <span class="mono">watchdog last checked 6m ago</span>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="outreach-head">
+    <div class="section-head">
+      <h2 id="outreach-head">Outreach contacts</h2>
+      <span class="count">outreach-bot &middot; lifetime</span>
+    </div>
+    <div class="stat-strip">
+      <div class="stat-tile">
+        <span class="stat-value">431</span>
+        <span class="stat-label">Contacted</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-value">58</span>
+        <span class="stat-label">Replied</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-value">20</span>
+        <span class="stat-label">Pending</span>
+      </div>
+      <div class="stat-tile">
+        <span class="stat-value">11</span>
+        <span class="stat-label">Opted out</span>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="ref-head">
+    <div class="section-head">
+      <h2 id="ref-head">Reference: degraded &amp; critical states</h2>
+      <span class="count">not live &middot; for implementation</span>
+    </div>
+    <div class="agent-grid">
+
+      <div class="agent-card" style="--stripe: var(--warn)">
+        <div class="agent-top">
+          <span class="agent-name">watchdog
+            <span class="agent-role">Health check, every 10 min</span>
+          </span>
+          <span class="status-chip warn">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5M12 16.5v.01"/><path d="M10.6 4.3 2.9 18a1.6 1.6 0 0 0 1.4 2.4h15.4a1.6 1.6 0 0 0 1.4-2.4L13.4 4.3a1.6 1.6 0 0 0-2.8 0Z"/></svg>
+            slow
+          </span>
+        </div>
+        <div class="agent-stats">
+          <div>
+            <div class="stat-label">Last run</div>
+            <div class="stat-value mono">2m ago</div>
+          </div>
+          <div>
+            <div class="stat-label">Duration</div>
+            <div class="stat-value mono" style="color: var(--warn)">18.4s</div>
+          </div>
+          <div>
+            <div class="stat-label">Tokens / 30d</div>
+            <div class="stat-value mono">0</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="agent-card" style="--stripe: var(--crit)">
+        <div class="agent-top">
+          <span class="agent-name">outreach-bot
+            <span class="agent-role">WhatsApp legal outreach, hourly</span>
+          </span>
+          <span class="status-chip crit">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></svg>
+            down
+          </span>
+        </div>
+        <div class="agent-stats">
+          <div>
+            <div class="stat-label">Last run</div>
+            <div class="stat-value mono" style="color: var(--crit)">1h 12m ago</div>
+          </div>
+          <div>
+            <div class="stat-label">Duration</div>
+            <div class="stat-value mono">&mdash;</div>
+          </div>
+          <div>
+            <div class="stat-label">Tokens / 30d</div>
+            <div class="stat-value mono">109.8k</div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="alert-panel" style="margin-top: 0.85rem; border-color: var(--crit); background: var(--crit-bg);">
+      <span class="alert-icon" style="background: transparent; color: var(--crit);">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5M12 16.5v.01"/><path d="M10.6 4.3 2.9 18a1.6 1.6 0 0 0 1.4 2.4h15.4a1.6 1.6 0 0 0 1.4-2.4L13.4 4.3a1.6 1.6 0 0 0-2.8 0Z"/></svg>
+      </span>
+      <div class="alert-text">
+        <strong style="color: var(--crit)">outreach-bot: no successful run in over 1 hour.</strong>
+        <span class="mono">firing since 2026-08-19 13:20 ART</span>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Generated from a single k3s node &middot; no data collected from visitors.</span>
+    <a href="#">source</a>
+  </footer>
+
+</div>
