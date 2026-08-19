@@ -1,34 +1,34 @@
 # homelab-gitops
 
-> Una notebook que juntaba polvo con la batería fundida, convertida en un
-> cluster Kubernetes gobernado 100% por Git. Nada se toca a mano en el
-> cluster: si algo cambia, cambia acá, se hace commit, y ArgoCD lo aplica
-> solo.
+> A laptop that was gathering dust with a dead battery, turned into a
+> Kubernetes cluster 100% governed by Git. Nothing gets touched by hand
+> on the cluster: if something changes, it changes here, gets committed,
+> and ArgoCD applies it automatically.
 
 |  |  |
 |---|---|
-| **Hardware** | Dell Latitude 7490 (i5 8va gen, 16GB RAM, sin GPU, sin batería — vive enchufada) |
-| **SO** | Debian 13, mínimo, sin entorno gráfico |
-| **Orquestador** | k3s (un solo nodo) + ArgoCD (self-heal on) |
-| **Regla de oro** | Los cerebros van por API (OpenAI/Claude), el fierro local solo orquesta |
-| **Agentes corriendo** | 2 — `morning-digest`, `watchdog` |
-| **Observabilidad** | Phoenix (tracing) + VictoriaMetrics (métricas) + node-exporter (salud del node) — las tres, fail-open |
-| **Red** | Pi-hole — DNS de toda la LAN, con bloqueo de ads/tracking a nivel de red |
-| **Acceso remoto** | Tailscale (mesh WireGuard) — homelab, desktop y celular en el mismo tailnet, SSH sin exponer puertos al router |
+| **Hardware** | Dell Latitude 7490 (8th-gen i5, 16GB RAM, no GPU, no battery — lives plugged in) |
+| **OS** | Debian 13, minimal, no desktop environment |
+| **Orchestrator** | k3s (single node) + ArgoCD (self-heal on) |
+| **Golden rule** | The brains go over the API (OpenAI/Claude), the local iron only orchestrates |
+| **Agents running** | 2 — `morning-digest`, `watchdog` |
+| **Observability** | Phoenix (tracing) + VictoriaMetrics (metrics) + node-exporter (node health) — all three, fail-open |
+| **Network** | Pi-hole — DNS for the whole LAN, with network-level ad/tracking blocking |
+| **Remote access** | Tailscale (WireGuard mesh) — homelab, desktop, and phone on the same tailnet, SSH without exposing ports on the router |
 
-## El loop completo
+## The full loop
 
 ```mermaid
 flowchart LR
-    Dev["vos"] -->|commit + push| Repo[("homelab-gitops\n(este repo)")]
+    Dev["you"] -->|commit + push| Repo[("homelab-gitops\n(this repo)")]
     Repo -->|watch| ArgoCD
-    ArgoCD -->|sync + self-heal| K3s["k3s en la Dell 7490"]
+    ArgoCD -->|sync + self-heal| K3s["k3s on the Dell 7490"]
     K3s --> Cron["CronJob: morning-digest"]
-    Cron -->|lee| RSS[("feeds RSS\ntech / producto / negocios")]
-    Cron -->|resume con| LLM["OpenAI API"]
-    Cron -->|entrega por| TG["Telegram"]
-    Cron -.->|traces OTLP\nfail-open| Phoenix[("Phoenix")]
-    Cron -.->|métricas HTTP\nfail-open| VM[("VictoriaMetrics")]
+    Cron -->|reads| RSS[("RSS feeds\ntech / product / business")]
+    Cron -->|summarizes with| LLM["OpenAI API"]
+    Cron -->|delivers via| TG["Telegram"]
+    Cron -.->|OTLP traces\nfail-open| Phoenix[("Phoenix")]
+    Cron -.->|HTTP metrics\nfail-open| VM[("VictoriaMetrics")]
 
     style Dev fill:#2d2d2d,color:#fff
     style ArgoCD fill:#ef7b4d,color:#fff
@@ -37,51 +37,52 @@ flowchart LR
     style VM fill:#c0392b,color:#fff
 ```
 
-Si alguien entra por SSH y edita algo con `kubectl` a mano, ArgoCD lo nota
-y lo revierte. Ese es, literalmente, el punto de todo el ejercicio.
+If someone SSHes in and edits something by hand with `kubectl`, ArgoCD
+notices and reverts it. That is, literally, the whole point of this
+exercise.
 
-## Por qué existe esto
+## Why this exists
 
-La 7490 tenía un problema simple: no arrancaba sin estar enchufada, y
-estaba juntando polvo. Un server que vive enchufado 24/7 y no necesita
-batería no es un defecto, es el caso de uso perfecto. La pregunta era qué
-tan lejos se podía llevar esa máquina vieja como plataforma real de
-aprendizaje — no un tutorial de juguete, sino la misma disciplina que usa
-un equipo de infra en producción, comprimida en un solo nodo.
+The 7490 had a simple problem: it wouldn't boot without being plugged in,
+and it was gathering dust. A server that lives plugged in 24/7 and
+doesn't need a battery isn't a defect, it's the perfect use case. The
+question was how far that old machine could be pushed as a real learning
+platform — not a toy tutorial, but the same discipline an infra team
+uses in production, compressed into a single node.
 
-Un i5 de 8va gen con 16GB de RAM no compite con GPUs corriendo modelos
-grandes, pero sobra y sobra para correr Kubernetes, ArgoCD, y agentes que
-llaman a un LLM por HTTP y se apagan. Pelear esa batalla al revés (LLM
-pesado local, orquestación mínima) hubiera sido jugar en contra del
-hardware que hay.
+An 8th-gen i5 with 16GB of RAM doesn't compete with GPUs running large
+models, but it's more than enough to run Kubernetes, ArgoCD, and agents
+that call an LLM over HTTP and shut down. Fighting that battle the other
+way around (heavy local LLM, minimal orchestration) would have meant
+fighting against the hardware on hand.
 
-## Qué hay corriendo acá
+## What's running here
 
-| Componente | Para qué |
+| Component | What it's for |
 |---|---|
-| **k3s** | Kubernetes de un solo nodo, liviano, con Traefik y SQLite incluidos. Nada de etcd ni HA — no hace falta para un nodo. |
-| **ArgoCD** | El corazón operativo. Vigila este repo y aplica cualquier cambio al cluster automáticamente, con self-heal activado. |
-| **`agents/morning-digest`** | El primer agente real: un CronJob diario que lee feeds RSS (tech, producto, negocios), arma un resumen con OpenAI agrupado por tema, y lo manda por Telegram con formato (negritas, bullets, link a cada noticia). Además publica esos mismos items en [`digest-agent`](https://github.com/julianalvarez95/digest-agent) (un agente Eve en Vercel), que los sirve al [portfolio](https://github.com/julianalvarez95/portfolio-personal) — fail-open, igual que tracing/métricas: si digest-agent está caído no afecta la entrega por Telegram. Corre, resume, se apaga — nada queda vivo consumiendo RAM entre corrida y corrida. |
-| **`agents/watchdog`** | El segundo agente: un CronJob cada 10 minutos que evalúa reglas de alerta (disco, memoria, load, salud de `morning-digest`) contra VictoriaMetrics y avisa por Telegram solo en cambios de estado reales — sin LLM, con máquina de estados propia (pending → firing, histéresis, dedup) para no mandar spam. |
-| **`infra/phoenix`** | Tracing de cada corrida de agente: fetch de RSS → llamada a OpenAI (con tokens) → entrega a Telegram, como un único trace navegable de punta a punta. |
-| **`infra/victoria-metrics`** | Métricas de costo (tokens), duración y heartbeat por agente, más scrape de la salud del node. Retención corta (10 días), pensada para los ~12Gi libres de disco que tiene la 7490. |
-| **`infra/node-exporter`** | DaemonSet liviano que expone CPU/memoria/disco del node para que VictoriaMetrics los scrapee cada 30s — antes de esto, la única forma de ver esos números era `kubectl top`, sin historial. |
-| **`infra/pihole`** | DNS de toda la LAN: el router reparte esta IP como DNS por DHCP, y Pi-hole filtra ads/tracking antes de reenviar a resolvers públicos (`1.1.1.1`, `9.9.9.9` — nunca el router, para no crear un loop). Solo DNS, sin DHCP propio — el router sigue asignando IPs. |
+| **k3s** | Single-node, lightweight Kubernetes, with Traefik and SQLite included. No etcd, no HA — not needed for one node. |
+| **ArgoCD** | The operational heart. Watches this repo and applies any change to the cluster automatically, with self-heal enabled. |
+| **`agents/morning-digest`** | The first real agent: a daily CronJob that reads RSS feeds (tech, product, business), builds a summary with OpenAI grouped by topic, and sends it via Telegram with formatting (bold, bullets, a link per item). It also publishes those same items to [`digest-agent`](https://digest-agent.vercel.app) (an Eve agent on Vercel), which serves them to the [portfolio](https://github.com/julianalvarez95/portfolio-personal) — fail-open, same as tracing/metrics: if digest-agent is down it doesn't affect delivery via Telegram. Runs, summarizes, shuts down — nothing stays alive consuming RAM between runs. |
+| **`agents/watchdog`** | The second agent: a CronJob every 10 minutes that evaluates alert rules (disk, memory, load, `morning-digest` health) against VictoriaMetrics and notifies via Telegram only on real state changes — no LLM, with its own state machine (pending → firing, hysteresis, dedup) to avoid spamming. |
+| **`infra/phoenix`** | Tracing for every agent run: RSS fetch → OpenAI call (with tokens) → Telegram delivery, as a single navigable end-to-end trace. |
+| **`infra/victoria-metrics`** | Cost metrics (tokens), duration, and heartbeat per agent, plus node health scraping. Short retention (10 days), sized for the ~12Gi of free disk the 7490 has. |
+| **`infra/node-exporter`** | Lightweight DaemonSet exposing the node's CPU/memory/disk so VictoriaMetrics can scrape them every 30s — before this, the only way to see those numbers was `kubectl top`, with no history. |
+| **`infra/pihole`** | DNS for the whole LAN: the router hands out this IP as DNS via DHCP, and Pi-hole filters ads/tracking before forwarding to public resolvers (`1.1.1.1`, `9.9.9.9` — never the router, to avoid creating a loop). DNS only, no DHCP of its own — the router still assigns IPs. |
 
-Ambas UIs de observabilidad (Phoenix y el `vmui` de VictoriaMetrics)
-más el panel de Pi-hole quedan detrás de un `IngressRoute` de Traefik,
-resueltos solo dentro de la LAN de casa (`phoenix.homelab.internal`,
-`metrics.homelab.internal`, `pihole.homelab.internal`) — sin exposición
-pública, sin TLS ni auth propios, mismo modelo de confianza que el
-resto del cluster. La excepción es el propio puerto 53 de Pi-hole, que
-sí necesita llegar a toda la LAN (no solo al cluster): se expone vía
-`hostPort` en el Deployment en vez de `hostNetwork`, porque k3s ya usa
-el 80/443 del node para Traefik y no hay MetalLB en este cluster.
+Both observability UIs (Phoenix and VictoriaMetrics' `vmui`) plus the
+Pi-hole panel sit behind a Traefik `IngressRoute`, resolved only within
+the home LAN (`phoenix.homelab.internal`, `metrics.homelab.internal`,
+`pihole.homelab.internal`) — no public exposure, no TLS or auth of their
+own, same trust model as the rest of the cluster. The exception is
+Pi-hole's own port 53, which does need to reach the whole LAN (not just
+the cluster): it's exposed via `hostPort` on the Deployment instead of
+`hostNetwork`, because k3s already uses the node's 80/443 for Traefik
+and there's no MetalLB on this cluster.
 
-Una vez que Pi-hole sea el resolver de la LAN, sus "Local DNS Records"
-pueden servir los `*.homelab.internal` de arriba directamente — hoy
-cada máquina de la LAN los resuelve vía una entrada manual en
-`/etc/hosts`, un hack que Pi-hole puede retirar.
+Once Pi-hole is the LAN's resolver, its "Local DNS Records" can serve
+the `*.homelab.internal` names above directly — today each machine on
+the LAN resolves them via a manual `/etc/hosts` entry, a hack Pi-hole
+can retire.
 
 ```mermaid
 flowchart TB
@@ -89,12 +90,12 @@ flowchart TB
         Cron["CronJob: morning-digest"]
         NodeExp["node-exporter\n(DaemonSet, hostNetwork)"]
         Phoenix[("Phoenix\ntracing")]
-        VM[("VictoriaMetrics\nmétricas")]
+        VM[("VictoriaMetrics\nmetrics")]
     end
 
-    Cron -.->|traces OTLP\nfail-open| Phoenix
-    Cron -.->|POST métricas\nfail-open| VM
-    NodeExp -->|scrape cada 30s| VM
+    Cron -.->|OTLP traces\nfail-open| Phoenix
+    Cron -.->|POST metrics\nfail-open| VM
+    NodeExp -->|scrape every 30s| VM
 
     Phoenix --> PhoenixWeb["phoenix.homelab.internal"]
     VM --> VMWeb["metrics.homelab.internal"]
@@ -104,294 +105,295 @@ flowchart TB
     style NodeExp fill:#16a085,color:#fff
 ```
 
-Las líneas punteadas son a propósito: si Phoenix o VictoriaMetrics están
-caídos, el agente loguea el error y sigue — la entrega del digest nunca
-depende de que la telemetría esté arriba.
+The dashed lines are intentional: if Phoenix or VictoriaMetrics are
+down, the agent logs the error and continues — digest delivery never
+depends on telemetry being up.
 
-## Cómo se armó, en orden real
+## How it was built, in the actual order
 
 <details>
-<summary><b>1. El sistema operativo</b> — por qué Debian y no otra cosa</summary>
+<summary><b>1. The operating system</b> — why Debian and not something else</summary>
 
-Instalación mínima, sin entorno gráfico. Se evaluaron Ubuntu Server (de
-más, con snapd y capas que no aportan nada acá), Fedora/openSUSE (ciclos
-de release demasiado cortos para un server que se quiere dejar tranquilo)
-y Arch (rolling release en una máquina desatendida es jugarse a que un
-update rompa algo mientras dormís). Debian gana por aburrido, que es
-exactamente lo que se necesita.
+Minimal install, no desktop environment. Ubuntu Server was considered
+(too much, with snapd and layers that add nothing here), Fedora/openSUSE
+(release cycles too short for a server meant to be left alone), and
+Arch (rolling release on an unattended machine is a bet that an update
+breaks something while you're asleep). Debian wins by being boring,
+which is exactly what's needed here.
 </details>
 
 <details>
-<summary><b>2. Acceso remoto, hecho bien</b> — SSH solo por clave</summary>
+<summary><b>2. Remote access, done right</b> — SSH by key only</summary>
 
-Se generó un par de claves ed25519 en el desktop, se copió la pública al
-server, y recién después de confirmar que el login sin password
-funcionaba se deshabilitó `PasswordAuthentication` — con dos terminales
-abiertas en paralelo por las dudas, porque quedarse afuera de tu propio
-server por un typo en `sshd_config` es un clásico.
+An ed25519 key pair was generated on the desktop, the public key copied
+to the server, and only after confirming password-less login worked was
+`PasswordAuthentication` disabled — with two terminals open in parallel
+just in case, because locking yourself out of your own server over a
+typo in `sshd_config` is a classic mistake.
 
-También apareció el caso menos obvio: `UsePAM yes` puede dejar un bypass
-de password vía `KbdInteractiveAuthentication` aunque
-`PasswordAuthentication` esté en `no`. Se verificó explícitamente con
-`ssh -o PubkeyAuthentication=no` para confirmar que de verdad rechazaba
-sin clave.
+A less obvious case also showed up: `UsePAM yes` can leave a password
+bypass via `KbdInteractiveAuthentication` even when
+`PasswordAuthentication` is `no`. This was explicitly verified with
+`ssh -o PubkeyAuthentication=no` to confirm it really did reject
+connections without a key.
 </details>
 
 <details>
-<summary><b>3. Red, con IP que no se mueve</b></summary>
+<summary><b>3. Networking, with an IP that doesn't move</b></summary>
 
-La 7490 arrancó por WiFi (funcional, pero no lo que se quiere para un
-server 24/7), y después se le conectó un cable Ethernet. La interfaz
-`enp0s31f6` no traía `dhclient` preinstalado en Debian 13 — se resolvió
-con `isc-dhcp-client` — y se dejó la configuración persistente en
-`/etc/network/interfaces` para que levante sola en cada boot. La IP quedó
-reservada por MAC en el router (`Pre-assigned DHCP IP Addresses`), así la
-dirección nunca cambia aunque el DHCP reinicie.
+The 7490 booted over WiFi at first (functional, but not what you want
+for a 24/7 server), and an Ethernet cable was connected afterward. The
+`enp0s31f6` interface didn't come with `dhclient` preinstalled on
+Debian 13 — solved with `isc-dhcp-client` — and the config was made
+persistent in `/etc/network/interfaces` so it comes up on its own on
+every boot. The IP was reserved by MAC on the router
+(`Pre-assigned DHCP IP Addresses`), so the address never changes even if
+the DHCP server restarts.
 </details>
 
 <details>
-<summary><b>4. k3s y ArgoCD, en ese orden, desde el primer día</b></summary>
+<summary><b>4. k3s and ArgoCD, in that order, from day one</b></summary>
 
-La tentación natural es instalar Kubernetes y empezar a tirar
-`kubectl apply` a mano mientras "se prueban cosas". Se evitó eso a
-propósito: ArgoCD se instaló antes del primer Deployment real, para que
-el hábito de "todo pasa por Git" quedara fijado desde el arranque y no
-como una migración incómoda después.
+The natural temptation is to install Kubernetes and start throwing
+`kubectl apply` by hand "while trying things out." That was avoided on
+purpose: ArgoCD was installed before the first real Deployment, so the
+habit of "everything goes through Git" would be set from the start
+instead of being an awkward migration later.
 
-El primer test fue un nginx dummy — no porque nginx importe, sino para
-confirmar el ciclo completo: commit → push → ArgoCD sincroniza →
-`kubectl delete pod` a mano → el pod vuelve solo.
+The first test was a dummy nginx — not because nginx matters, but to
+confirm the full cycle: commit → push → ArgoCD syncs → `kubectl delete
+pod` by hand → the pod comes back on its own.
 </details>
 
 <details>
-<summary><b>5. El primer agente real</b> — decisiones de diseño</summary>
+<summary><b>5. The first real agent</b> — design decisions</summary>
 
-Reemplazar el nginx de prueba por algo que efectivamente hace algo útil:
-leer feeds, resumir con un LLM, mandar el resultado a Telegram.
+Replacing the test nginx with something that actually does something
+useful: read feeds, summarize with an LLM, send the result to Telegram.
 
-- **Secrets fuera de Git.** Se evaluó SOPS+KSOPS para manejar secrets
-  encriptados dentro del repo, pero para un solo CronJob con un puñado de
-  variables es sobreingeniería. Se optó por crear el `Secret` de
-  Kubernetes directo con `kubectl`, mientras el CronJob (que sí vive en
-  Git) lo referencia por nombre. GitOps parcial, pragmático. Cuando haya
-  tres o cuatro agentes con secrets distintos, ahí se justifica meter
-  SOPS de una.
-- **Build manual, no CI todavía.** La imagen se buildea a mano y se
-  pushea a GitHub Container Registry. Suficiente para un agente. Cuando
-  el ciclo de iterar-rebuildear-pushear empiece a cansar, se migra a
-  GitHub Actions.
-- **Gmail como fuente, probado y descartado.** La primera versión sumaba
-  newsletters etiquetados en Gmail vía IMAP, pero el label de Gmail se
-  trataba como si fuera literalmente una carpeta IMAP (`imap.select`),
-  algo que no funciona en general para labels anidados. En vez de meterle
-  la extensión `X-GM-LABELS` de Gmail para arreglarlo bien, se sacó la
-  fuente entera — RSS solo, más feeds, resumen más largo y con links.
+- **Secrets kept out of Git.** SOPS+KSOPS was considered for handling
+  encrypted secrets inside the repo, but for a single CronJob with a
+  handful of variables that's over-engineering. The choice was to
+  create the Kubernetes `Secret` directly with `kubectl`, while the
+  CronJob (which does live in Git) references it by name. Partial,
+  pragmatic GitOps. Once there are three or four agents with different
+  secrets, that's when SOPS earns its keep.
+- **Manual build, no CI yet.** The image is built by hand and pushed to
+  the GitHub Container Registry. Enough for one agent. Once the
+  iterate-rebuild-push cycle starts getting old, it migrates to GitHub
+  Actions.
+- **Gmail as a source, tried and dropped.** The first version pulled in
+  newsletters labeled in Gmail via IMAP, but the Gmail label was treated
+  as if it were literally an IMAP folder (`imap.select`), which doesn't
+  generally work for nested labels. Rather than reaching for Gmail's
+  `X-GM-LABELS` extension to fix it properly, the source was dropped
+  entirely — RSS only, more feeds, a longer summary with links.
 </details>
 
 <details>
-<summary><b>6. Observabilidad, en 3 fases</b> — tracing, métricas y salud del node</summary>
+<summary><b>6. Observability, in 3 phases</b> — tracing, metrics, and node health</summary>
 
-Con un solo agente en producción, la única forma de ver qué pasaba en
-cada corrida era leer logs de Kubernetes a mano — y ya había pasado un
-incidente real (el de arriba: el job terminaba `Completed`, exit 0, sin
-mandar nada a Telegram). Antes de tocar código se escribió un documento
-de diseño (`docs/superpowers/specs/2026-07-23-telemetria-design.md`),
-en 3 fases con prioridad decreciente: debugging de agentes, costo de
-LLM, salud del node.
+With a single agent in production, the only way to see what was
+happening on each run was reading Kubernetes logs by hand — and there
+had already been a real incident (the one below: the job finished
+`Completed`, exit 0, without sending anything to Telegram). Before
+touching code, a design doc was written
+(`docs/superpowers/specs/2026-07-23-telemetria-design.md`), in 3 phases
+in decreasing priority: agent debugging, LLM cost, node health.
 
-**Arquitectura: dual-write directo, sin collector.** Se evaluó un OTel
-Collector como hub central, pero suma un servicio persistente más en un
-node que ya está ajustado de disco (12Gi libres). Cada agente exporta
-directo a Phoenix (traces) y a VictoriaMetrics (métricas) al final de su
-corrida — coherente con la regla de oro de este repo: el hardware local
-solo orquesta, nada corre de más.
+**Architecture: direct dual-write, no collector.** An OTel Collector as
+a central hub was considered, but that adds one more persistent service
+on a node that's already tight on disk (12Gi free). Each agent exports
+directly to Phoenix (traces) and VictoriaMetrics (metrics) at the end
+of its run — consistent with this repo's golden rule: the local
+hardware only orchestrates, nothing runs extra.
 
-**Fase 1 — Phoenix.** El cliente de OpenAI queda auto-instrumentado vía
-OpenInference (tokens de prompt/completion incluidos gratis), más spans
-manuales para el fetch de RSS y la entrega a Telegram, todos anidados
-bajo un span raíz por corrida — así una corrida completa es un trace
-navegable de punta a punta, no 3 traces sueltos. Regla no negociable:
-la telemetría tiene que fallar en modo abierto (*fail open*) — si
-Phoenix está caído, se loguea el error y el digest se manda igual.
+**Phase 1 — Phoenix.** The OpenAI client gets auto-instrumented via
+OpenInference (prompt/completion tokens included for free), plus manual
+spans for the RSS fetch and the Telegram delivery, all nested under one
+root span per run — so a full run is one navigable end-to-end trace,
+not 3 loose traces. Non-negotiable rule: telemetry has to fail open —
+if Phoenix is down, the error gets logged and the digest still gets
+sent.
 
-**Fase 2 — VictoriaMetrics.** Al final de cada corrida, el agente
-reporta éxito/fracaso, duración, tokens usados y un timestamp de
-heartbeat. El detalle que importa: el reporte de éxito vive en un
-`try/finally` que envuelve *toda* la corrida, no solo el camino feliz
-— si no fuera así, el métrico de éxito nunca podría registrar una
-falla real, que es justamente para lo que existe.
+**Phase 2 — VictoriaMetrics.** At the end of each run, the agent reports
+success/failure, duration, tokens used, and a heartbeat timestamp. The
+detail that matters: the success report lives in a `try/finally` that
+wraps the *entire* run, not just the happy path — otherwise the success
+metric could never register a real failure, which is exactly what it
+exists for.
 
-**Fase 3 — node-exporter.** DaemonSet liviano, sin PVC propio,
-scrapeado por VictoriaMetrics cada 30 segundos. Acá el patrón se
-invierte: en vez de que el agente empuje datos (como en las Fases 1 y
-2), es VictoriaMetrics quien va a buscarlos — porque node-exporter es
-un proceso persistente, no un CronJob efímero.
+**Phase 3 — node-exporter.** Lightweight DaemonSet, no PVC of its own,
+scraped by VictoriaMetrics every 30 seconds. The pattern flips here:
+instead of the agent pushing data (as in Phases 1 and 2), it's
+VictoriaMetrics that goes and fetches it — because node-exporter is a
+persistent process, not an ephemeral CronJob.
 </details>
 
 <details>
-<summary><b>7. Pi-hole</b> — DNS de toda la LAN, no solo del cluster</summary>
+<summary><b>7. Pi-hole</b> — DNS for the whole LAN, not just the cluster</summary>
 
-Hasta acá todo lo que corre en el cluster se consume solo desde adentro
-de la LAN vía `IngressRoute` — pero DNS es distinto: tiene que llegar a
-*cada* dispositivo de la red, no solo a quien le apunte a un hostname
-`*.homelab.internal`.
+Up to this point everything running on the cluster was only consumed
+from within the LAN via `IngressRoute` — but DNS is different: it has
+to reach *every* device on the network, not just whoever points at a
+`*.homelab.internal` hostname.
 
-**Por qué `hostPort` y no `hostNetwork`.** k3s ya usa el 80/443 del
-node para Traefik, y no hay MetalLB en este cluster (ningún Service
-`LoadBalancer` en todo el repo). Con `hostNetwork: true` el pod de
-Pi-hole heredaría la red del node entera y su panel web (puerto 80)
-chocaría con Traefik. La solución fue exponer *solo* el puerto 53
-(TCP+UDP) al host vía `hostPort` en el Deployment, dejando el panel web
-como cualquier otro servicio del repo: ClusterIP + `IngressRoute`.
+**Why `hostPort` and not `hostNetwork`.** k3s already uses the node's
+80/443 for Traefik, and there's no MetalLB on this cluster (no
+`LoadBalancer` Service anywhere in the repo). With `hostNetwork: true`
+the Pi-hole pod would inherit the node's entire network and its web
+panel (port 80) would collide with Traefik. The fix was to expose
+*only* port 53 (TCP+UDP) to the host via `hostPort` on the Deployment,
+leaving the web panel as just another service in the repo: ClusterIP +
+`IngressRoute`.
 
-**Nunca el router como upstream.** `FTLCONF_dns_upstreams` apunta
-directo a `1.1.1.1`/`9.9.9.9`. Apuntar al router hubiera cerrado un
-loop (router → Pi-hole → router) que tumba la resolución DNS de toda la
-casa apenas alguien lo prueba.
+**Never the router as upstream.** `FTLCONF_dns_upstreams` points
+directly at `1.1.1.1`/`9.9.9.9`. Pointing at the router would have
+closed a loop (router → Pi-hole → router) that takes down DNS
+resolution for the whole house the moment anyone tries it.
 
-Dos bugs reales aparecieron recién al probar desde otro dispositivo de
-la LAN (ver tabla de baches abajo): `ufw` bloqueando el tráfico
-reenviado (`FORWARD`, no `INPUT`) hacia el pod, y FTL ignorando
-consultas que no vinieran de la subnet del propio CNI. Ninguno de los
-dos aparece probando desde el mismo node — hace falta un segundo
-dispositivo en la LAN para verlos.
+Two real bugs only showed up when testing from another device on the
+LAN (see the bug table below): `ufw` blocking forwarded traffic
+(`FORWARD`, not `INPUT`) toward the pod, and FTL ignoring queries that
+didn't come from the CNI's own subnet. Neither shows up testing from the
+node itself — you need a second device on the LAN to see them.
 
-**Verificado end-to-end:** con el router (Technicolor DPC3848VE)
-repartiendo `192.168.0.214` como DNS por DHCP, un dispositivo real de
-la LAN resuelve dominios normales y bloquea dominios de tracking
-conocidos (`doubleclick.net` → `0.0.0.0`). El dashboard de Pi-hole
-muestra IPs de cliente distintas por dispositivo en vez de una sola IP
-genérica — confirma que el `hostPort` no está enmascarando el origen
-real de las consultas.
+**Verified end-to-end:** with the router (Technicolor DPC3848VE)
+handing out `192.168.0.214` as DNS via DHCP, a real device on the LAN
+resolves normal domains and blocks known tracking domains
+(`doubleclick.net` → `0.0.0.0`). The Pi-hole dashboard shows distinct
+client IPs per device instead of one generic IP — confirming that
+`hostPort` isn't masking the real origin of the queries.
 </details>
 
 <details>
-<summary><b>8. El segundo agente: watchdog</b> — alertas proactivas, no un chatbot</summary>
+<summary><b>8. The second agent: watchdog</b> — proactive alerts, not a chatbot</summary>
 
-Con un solo agente (`morning-digest`) y observabilidad completa, la
-pregunta natural era qué hacer con el resto de la 7490. Se descartaron
-un bot conversacional y RAG por no aportar disciplina nueva; se eligió
-en cambio un **watchdog**: un agente que vigila las métricas que ya
-existen y avisa por Telegram solo cuando algo cambia de estado de
-verdad — el objetivo explícito era aprender alerting real (umbrales,
-histéresis, deduplicación, evitar spam), no solo mover datos de un
-lado a otro.
+With one agent (`morning-digest`) and full observability in place, the
+natural question was what to do with the rest of the 7490. A
+conversational bot and RAG were both ruled out for not adding any new
+discipline; a **watchdog** was chosen instead: an agent that watches the
+metrics that already exist and only notifies via Telegram when
+something really changes state — the explicit goal was to learn real
+alerting (thresholds, hysteresis, deduplication, avoiding spam), not
+just move data from one place to another.
 
-- **CronJob con máquina de estados propia, no vmalert+Alertmanager.**
-  Un stack estándar hubiera resuelto esto con menos código, pero
-  también hubiera escondido justo la parte que se quería aprender.
-  vmalert+Alertmanager queda como camino de graduación futuro cuando
-  el número de reglas crezca (~8-10).
-- **Sin LLM.** El texto de cada alerta es un template fijo por regla —
-  determinístico, nada que pueda fallar o alucinar justo cuando todo lo
-  demás ya está roto. "Watchdog" vigila al agente LLM (`morning-digest`),
-  no llama a uno.
-- **Estado en VictoriaMetrics, no un PVC nuevo.** Reusa la infra que ya
-  existe (el disco es la restricción más ajustada del node) y de yapa
-  da gráficos de historial de alertas gratis en `vmui`.
-- **Tres estados por regla:** `0` inactivo, `1` pending (condición
-  verdadera pero todavía no confirmada), `2` firing. Pasar de `1` a `2`
-  exige que la condición siga verdadera en la corrida siguiente
-  (`for_seconds`, ~10 min para las reglas de disco/memoria/load) —
-  eso es la histéresis, para no alertar por un pico de un segundo.
-  Mientras el estado se mantiene en `2` no se vuelve a notificar (el
-  dedup), y si nunca pasó de `1` la resolución es silenciosa: no se
-  había avisado nada, así que tampoco hay nada que resolver en voz alta.
-- **Lecturas fail-closed, escrituras fail-open.** Si falla el *push* de
-  una métrica se loguea y se sigue (mismo criterio que el resto del
-  repo). Pero si falla la *lectura* del estado previo de una regla, esa
-  regla se saltea esa corrida entera en vez de asumir "inactivo" —
-  asumir inactivo con VictoriaMetrics caída convertiría justo esa caída
-  en una ráfaga de falsos positivos, el spam que este agente existe
-  para evitar.
-- **Código de Telegram/métricas duplicado a propósito, no compartido.**
-  `watchdog` copia `send_telegram`, `sanitize_telegram_html` y
-  `push_metrics` casi textual desde `morning-digest` en vez de extraer
-  un módulo común — dos agentes no justifican esa capa. El disparador
-  para extraer `agents/_shared/` queda en el tercer agente, documentado
-  en `CLAUDE.md`.
+- **A CronJob with its own state machine, not vmalert+Alertmanager.** A
+  standard stack would have solved this with less code, but it would
+  also have hidden exactly the part that was meant to be learned.
+  vmalert+Alertmanager remains a future graduation path once the number
+  of rules grows (~8-10).
+- **No LLM.** The text of each alert is a fixed template per rule —
+  deterministic, nothing that can fail or hallucinate right when
+  everything else is already broken. "Watchdog" watches the LLM agent
+  (`morning-digest`), it doesn't call one.
+- **State in VictoriaMetrics, not a new PVC.** Reuses existing infra
+  (disk is the tightest constraint on the node) and gets free alert
+  history charts in `vmui` as a bonus.
+- **Three states per rule:** `0` inactive, `1` pending (condition true
+  but not yet confirmed), `2` firing. Going from `1` to `2` requires the
+  condition to still be true on the next run (`for_seconds`, ~10 min for
+  the disk/memory/load rules) — that's the hysteresis, to avoid
+  alerting on a one-second spike. While the state stays at `2` it
+  doesn't notify again (the dedup), and if it never made it past `1`
+  the resolution is silent: nothing had been alerted, so there's
+  nothing to resolve out loud either.
+- **Fail-closed reads, fail-open writes.** If pushing a metric fails, it
+  gets logged and the agent moves on (same rule as the rest of the
+  repo). But if reading a rule's previous state fails, that rule skips
+  that entire run instead of assuming "inactive" — assuming inactive
+  while VictoriaMetrics is down would turn that outage itself into a
+  burst of false positives, exactly the spam this agent exists to
+  avoid.
+- **Telegram/metrics code duplicated on purpose, not shared.**
+  `watchdog` copies `send_telegram`, `sanitize_telegram_html`, and
+  `push_metrics` almost verbatim from `morning-digest` instead of
+  extracting a shared module — two agents don't justify that layer. The
+  trigger for extracting `agents/_shared/` is left for the third agent,
+  documented in `CLAUDE.md`.
 
-Verificado en vivo contra el cluster real: se forzó el umbral de
-`disk_low` a un valor absurdo, se dispararon corridas manuales, y se
-confirmó la secuencia completa `0 → 1 → 2 (FIRING, un solo mensaje) →
-2 (sin renotificar) → 0 (RESOLVED)` en Telegram y en los gráficos de
-`vmui`, antes de revertir el umbral a su valor real.
+Verified live against the real cluster: the `disk_low` threshold was
+forced to an absurd value, manual runs were triggered, and the full
+sequence `0 → 1 → 2 (FIRING, a single message) → 2 (no re-notify) → 0
+(RESOLVED)` was confirmed in Telegram and in the `vmui` charts, before
+reverting the threshold to its real value.
 </details>
 
 <details>
-<summary><b>9. Tailscale</b> — acceso remoto entre homelab, desktop y celular, sin exponer nada al router</summary>
+<summary><b>9. Tailscale</b> — remote access between homelab, desktop, and phone, without exposing anything on the router</summary>
 
-Hasta acá el acceso a la 7490 dependía de estar en la misma LAN (SSH por
-IP local) o de exponer puertos en el router — ninguna de las dos escala
-bien para conectar el desktop y el celular desde fuera de casa.
-Tailscale arma una mesh WireGuard entre los tres dispositivos, cada uno
-con una IP fija en `100.64.0.0/10` (CGNAT), sin abrir nada hacia
-internet.
+Up to this point, access to the 7490 depended on being on the same LAN
+(SSH over a local IP) or exposing ports on the router — neither scales
+well for connecting the desktop and phone from outside the house.
+Tailscale sets up a WireGuard mesh between the three devices, each with
+a fixed IP on `100.64.0.0/10` (CGNAT), without opening anything toward
+the internet.
 
-**Verificado antes de instalar: no choca con Pi-hole.** Pi-hole corre en
-el cluster, no como servicio nativo del host — el `Deployment` expone el
-53 vía `hostPort` (ver sección 7), que Kubernetes implementa como DNAT
-de iptables, no como un socket real del host. `ss -tuln | grep :53` no
-muestra ningún proceso escuchando a nivel de host, así que el `tailscaled`
-del homelab no compite por el puerto. De yapa, Tailscale suma una
-interfaz más (`tailscale0`) por la que Pi-hole podría eventualmente
-servir DNS también a dispositivos remotos — pendiente de decidir si se
-configura el "Global nameserver" del tailnet apuntando a la IP Tailscale
-del homelab.
+**Verified before installing: no conflict with Pi-hole.** Pi-hole runs
+in the cluster, not as a native host service — the `Deployment` exposes
+port 53 via `hostPort` (see section 7), which Kubernetes implements as
+iptables DNAT, not a real host socket. `ss -tuln | grep :53` shows no
+process listening at the host level, so the homelab's `tailscaled`
+doesn't compete for the port. As a bonus, Tailscale adds one more
+interface (`tailscale0`) through which Pi-hole could eventually also
+serve DNS to remote devices — still pending a decision on whether to
+point the tailnet's "Global nameserver" at the homelab's Tailscale IP.
 
-**Instalación, igual en las tres máquinas Linux/homelab y desktop:**
+**Installation, the same on all three Linux/homelab and desktop
+machines:**
 
 ```bash
 curl -fsSL https://tailscale.com/install.sh | sh
 sudo tailscale up --ssh
 ```
 
-`--ssh` habilita el SSH nativo de Tailscale (autenticado por identidad
-del tailnet, no por clave), sumado al SSH por clave que ya existía
-(sección 2) — no lo reemplaza. En el celular fue instalar la app oficial
-de la App Store y loguear con la misma cuenta.
+`--ssh` enables Tailscale's native SSH (authenticated by tailnet
+identity, not by key), in addition to the key-based SSH that already
+existed (section 2) — it doesn't replace it. On the phone it was just
+installing the official App Store app and logging in with the same
+account.
 
-**MagicDNS**, activado después desde el panel de admin
-(`login.tailscale.com/admin/dns`), resuelve el nombre de cada dispositivo
-sin tocar nada en las máquinas: `ssh usainbot@homelab` en vez de
+**MagicDNS**, enabled afterward from the admin panel
+(`login.tailscale.com/admin/dns`), resolves each device's name without
+touching anything on the machines: `ssh usainbot@homelab` instead of
 `ssh usainbot@100.102.169.46`.
 </details>
 
-## Los baches, porque son la parte que vale la pena releer
+## The bumps, because they're the part worth re-reading
 
-Nada de esto salió andando a la primera, y está bien que así sea:
+None of this worked on the first try, and that's fine:
 
-| Bache | Qué pasó en realidad | Cómo se resolvió |
+| Bump | What actually happened | How it got fixed |
 |---|---|---|
-| **CRD de ArgoCD no aplicaba** | `kubectl apply` excedía el límite de 256KB de la annotation `last-applied-configuration`. | `--server-side --force-conflicts`, que no depende de esa annotation. |
-| **`k3s kubectl` ignoraba `~/.kube/config`** | A diferencia de `kubectl` normal, iba directo a `/etc/rancher/k3s/k3s.yaml` (permisos solo root). | Exportar `KUBECONFIG` explícitamente antes de cada comando. |
-| **`openai==1.54.0` tiraba `TypeError` sobre `proxies`** | `httpx` no estaba pinneado, `pip` instaló la última versión, que había sacado ese parámetro interno. | Pinnear `httpx==0.27.2`. Recordatorio permanente: pinnear versiones, siempre. |
-| **El job corría `Completed`, exit 0, pero no llegaba nada a Telegram** | El script ignoraba silenciosamente cualquier error de la API de Telegram. Al agregar logging + `raise_for_status()`, apareció el problema real: el token tenía el prefijo `bot` duplicado (`botbot123:...`), tal cual lo entrega BotFather si lo copiás del mensaje de confirmación. | Se corrigió el dato **y** el código ahora tolera el prefijo con `.removeprefix("bot")`, para que el mismo error humano no vuelva a romper nada. |
-| **La fuente de Gmail "andaba" pero no traía nada útil** | El label se resolvía como carpeta IMAP literal, sin verificar si el `select` había funcionado — fallaba en silencio. | Se sacó la fuente en vez de arreglar el lookup: RSS ya cubre el caso de uso mejor. |
-| **El instrumentador de OpenAI pedía una versión mucho más nueva** | `openinference-instrumentation-openai` exige `openai>=1.69.0` incluso en sus versiones más viejas — el repo tenía `openai==1.54.0` pinneado desde el incidente de `httpx` de la fila de arriba. | Subir `openai` a `1.99.9` (misma major version, sin saltar a la v2 del SDK) y revalidar que `httpx==0.27.2` seguía siendo compatible antes de dar por cerrado el cambio. |
-| **El instrumentador crasheaba con un `TypeError` de `wrap_function_wrapper`** | `wrapt` sin pinnear resolvía a la versión 2.x, que cambió la firma que `openinference-instrumentation-openai==0.1.40` esperaba. | Pinnear `wrapt==1.17.3`. |
-| **`PHOENIX_COLLECTOR_ENDPOINT` armaba una URL rota** | Sin el esquema `http://` explícito, Phoenix no podía inferir el protocolo de transporte y caía en silencio a HTTP con una URL malformada, en vez de gRPC. | Siempre `http://host:4317`, aunque el transporte real sea gRPC. |
-| **El pod de Phoenix crasheaba al arrancar** | Kubernetes inyecta automáticamente una env var `PHOENIX_PORT="tcp://<ip>:6006"` en cualquier pod del namespace apenas existe un Service llamado `phoenix` — y Phoenix espera que esa variable sea un entero, no ese string. | Fijar `PHOENIX_PORT` y `PHOENIX_GRPC_PORT` explícitos en el Deployment, pisando el valor autogenerado. |
-| **La UI de Phoenix no se veía desde otra máquina de la LAN** | `ufw` tiene política `DROP` por default y solo permitía explícitamente un puñado de puertos (SSH, 6443, 80, 443, 8080) — el 6006 del port-forward no estaba en la lista. | Resuelto de raíz con el `IngressRoute` de Traefik sobre el puerto 80 (ya permitido), en vez de abrir un puerto nuevo por cada UI. |
-| **Un feed RSS cortó la conexión a mitad de una corrida** | `RemoteDisconnected` real — la primera falla que el tracing nuevo capturó en producción, visible como un span con `status_code: ERROR` y el stack trace completo en Phoenix, en vez de perderse en logs de Kubernetes. | Sin arreglar a propósito: quedó como el primer caso real que demuestra por qué vale la pena tener tracing desde el día uno. |
-| **VictoriaMetrics "parece vacío" la mayor parte del día** | Con una sola muestra por corrida diaria, las queries instantáneas (incluida la que usa `vmui` por default) caen fuera del lookback de ~5 minutos y devuelven "sin datos", aunque la serie exista. | No es una falla: usar una query de rango (últimos 7 días) o `last_over_time(metric[25h])`. |
-| **Pi-hole no resolvía nada desde otro dispositivo de la LAN** | El tráfico DNAT del `hostPort` (host → pod) pasa por la cadena `FORWARD` de iptables, no por `INPUT` — `ufw allow 53/tcp` y `ufw allow 53/udp` no alcanzan porque esas reglas solo cubren `INPUT`. `DEFAULT_FORWARD_POLICY="DROP"` en `/etc/default/ufw` descartaba todo. | `DEFAULT_FORWARD_POLICY="ACCEPT"` + `ufw reload`. Aceptable en un node de un solo cluster sin nada más ruteando detrás. |
-| **Pi-hole seguía sin responder después de arreglar `ufw`** | El `dig` directo a la IP del pod funcionaba, pero desde la LAN seguía en timeout. El log de FTL lo decía explícito: `dnsmasq: ignoring query from non-local network 192.168.0.214` — el modo `listeningMode` default (`LOCAL`) solo responde a fuentes que la propia interfaz del pod reconoce como red local (la subnet del CNI), no la LAN real que llega vía `hostPort`. | `FTLCONF_dns_listeningMode=ALL`. Aceptable porque Pi-hole no tiene exposición pública, solo LAN. |
-| **`watchdog` mandó un FIRING duplicado al probar la máquina de estados** | Dos corridas manuales disparadas ~15-17s aparte (mucho más pegadas que el schedule real de 10 min) pisaron el `-search.latencyOffset` de VictoriaMetrics (~30s): la segunda corrida leyó el estado *previo* a que la primera lo escribiera. No era un bug de la lógica de estados. | Nada que arreglar en el código — al cadence real de `*/10 * * * *` la ventana no aplica. Documentado en `CLAUDE.md` para no repetir el susto probando a mano. |
-| **`tailscale up --ssh` se colgaba sin mostrar la URL de login en el desktop** | `tailscaled` quedaba reintentando `bootstrapDNS` contra varios hosts de DERP sin avanzar. `resolvectl status` mostró que Cloudflare WARP tenía el scope `+DefaultRoute` de DNS con un stub local (`127.0.2.2`/`127.0.2.3`), y `dig login.tailscale.com` devolvía IPs `192.200.0.x` — fake-IPs sintéticas de WARP, no la IP real del control plane de Tailscale. | `warp-cli disconnect` antes de `tailscale up --ssh`. Para correr ambos en simultáneo a futuro, excluir el rango CGNAT de Tailscale del túnel de WARP: `warp-cli tunnel host add 100.64.0.0/10`. |
+| **ArgoCD's CRD wouldn't apply** | `kubectl apply` exceeded the 256KB limit of the `last-applied-configuration` annotation. | `--server-side --force-conflicts`, which doesn't depend on that annotation. |
+| **`k3s kubectl` ignored `~/.kube/config`** | Unlike regular `kubectl`, it went straight to `/etc/rancher/k3s/k3s.yaml` (root-only permissions). | Export `KUBECONFIG` explicitly before every command. |
+| **`openai==1.54.0` raised a `TypeError` about `proxies`** | `httpx` wasn't pinned, `pip` installed the latest version, which had dropped that internal parameter. | Pin `httpx==0.27.2`. Permanent reminder: always pin versions. |
+| **The job ran `Completed`, exit 0, but nothing reached Telegram** | The script silently swallowed any error from the Telegram API. After adding logging + `raise_for_status()`, the real problem showed up: the token had the `bot` prefix duplicated (`botbot123:...`), exactly as BotFather hands it over if you copy it from the confirmation message. | Fixed the data **and** the code now tolerates the prefix with `.removeprefix("bot")`, so the same human error can't break it again. |
+| **The Gmail source "worked" but brought back nothing useful** | The label was resolved as a literal IMAP folder, without checking whether the `select` had actually succeeded — it failed silently. | The source was dropped instead of fixing the lookup: RSS already covers the use case better. |
+| **The OpenAI instrumenter demanded a much newer version** | `openinference-instrumentation-openai` requires `openai>=1.69.0` even in its oldest releases — the repo had `openai==1.54.0` pinned since the `httpx` incident above. | Bump `openai` to `1.99.9` (same major version, without jumping to SDK v2) and revalidate that `httpx==0.27.2` was still compatible before closing out the change. |
+| **The instrumenter crashed with a `TypeError` from `wrap_function_wrapper`** | Unpinned `wrapt` resolved to version 2.x, which changed the signature `openinference-instrumentation-openai==0.1.40` expected. | Pin `wrapt==1.17.3`. |
+| **`PHOENIX_COLLECTOR_ENDPOINT` built a broken URL** | Without the explicit `http://` scheme, Phoenix couldn't infer the transport protocol and silently fell back to HTTP with a malformed URL, instead of gRPC. | Always `http://host:4317`, even though the actual transport is gRPC. |
+| **The Phoenix pod crashed on startup** | Kubernetes automatically injects a `PHOENIX_PORT="tcp://<ip>:6006"` env var into any pod in the namespace as soon as a Service named `phoenix` exists — and Phoenix expects that variable to be an integer, not that string. | Set `PHOENIX_PORT` and `PHOENIX_GRPC_PORT` explicitly in the Deployment, overriding the auto-generated value. |
+| **The Phoenix UI wasn't reachable from another machine on the LAN** | `ufw` has a `DROP` default policy and only explicitly allowed a handful of ports (SSH, 6443, 80, 443, 8080) — the port-forwarded 6006 wasn't on the list. | Solved at the root with Traefik's `IngressRoute` over port 80 (already allowed), instead of opening a new port for every UI. |
+| **An RSS feed dropped the connection mid-run** | A real `RemoteDisconnected` — the first failure the new tracing caught in production, visible as a span with `status_code: ERROR` and the full stack trace in Phoenix, instead of getting lost in Kubernetes logs. | Left unfixed on purpose: it stands as the first real case proving why tracing is worth having from day one. |
+| **VictoriaMetrics "looks empty" most of the day** | With just one sample per daily run, instant queries (including the one `vmui` uses by default) fall outside the ~5-minute lookback and return "no data," even though the series exists. | Not a bug: use a range query (last 7 days) or `last_over_time(metric[25h])`. |
+| **Pi-hole wasn't resolving anything from another device on the LAN** | The `hostPort` DNAT traffic (host → pod) goes through the `FORWARD` iptables chain, not `INPUT` — `ufw allow 53/tcp` and `ufw allow 53/udp` weren't enough because those rules only cover `INPUT`. `DEFAULT_FORWARD_POLICY="DROP"` in `/etc/default/ufw` dropped everything. | `DEFAULT_FORWARD_POLICY="ACCEPT"` + `ufw reload`. Acceptable on a single-cluster node with nothing else routing behind it. |
+| **Pi-hole still wasn't responding after fixing `ufw`** | `dig` straight to the pod's IP worked, but from the LAN it still timed out. The FTL log said it plainly: `dnsmasq: ignoring query from non-local network 192.168.0.214` — the default `listeningMode` (`LOCAL`) only responds to sources the pod's own interface recognizes as local (the CNI subnet), not the real LAN arriving via `hostPort`. | `FTLCONF_dns_listeningMode=ALL`. Acceptable because Pi-hole has no public exposure, LAN only. |
+| **`watchdog` sent a duplicate FIRING while testing the state machine** | Two manual runs triggered ~15-17s apart (much closer together than the real 10-min schedule) landed inside VictoriaMetrics' `-search.latencyOffset` (~30s): the second run read the state *before* the first one had written it. Not a bug in the state logic. | Nothing to fix in the code — at the real `*/10 * * * *` cadence the window doesn't apply. Documented in `CLAUDE.md` so the scare doesn't repeat from manual testing. |
+| **`tailscale up --ssh` hung without showing the login URL on the desktop** | `tailscaled` kept retrying `bootstrapDNS` against several DERP hosts without progress. `resolvectl status` showed Cloudflare WARP holding the `+DefaultRoute` DNS scope with a local stub (`127.0.2.2`/`127.0.2.3`), and `dig login.tailscale.com` returned `192.200.0.x` IPs — synthetic fake-IPs from WARP, not Tailscale's real control-plane IP. | `warp-cli disconnect` before `tailscale up --ssh`. To run both at once in the future, exclude Tailscale's CGNAT range from the WARP tunnel: `warp-cli tunnel host add 100.64.0.0/10`. |
 
-Ninguno de estos errores fue exótico. Son los errores normales de armar
-infraestructura real: límites de API mal documentados, defaults de
-herramientas que cambian entre versiones, y un copy-paste de token con un
-prefijo de más. La diferencia entre que esto ande o no es tener logging
-que efectivamente diga qué pasó, en vez de asumir que "no tiró error"
-significa "funcionó".
+None of these errors were exotic. They're the normal errors of building
+real infrastructure: poorly documented API limits, tool defaults that
+change between versions, and a copy-pasted token with an extra prefix.
+The difference between this working or not is having logging that
+actually says what happened, instead of assuming "it didn't throw an
+error" means "it worked."
 
-## Estructura del repo
+## Repo structure
 
 ```
 homelab-gitops/
-├── apps/                     # reservado para el patrón app-of-apps a futuro
+├── apps/                     # reserved for the app-of-apps pattern, future
 ├── agents/
 │   ├── morning-digest/
 │   │   ├── src/
@@ -410,53 +412,54 @@ homelab-gitops/
 │       ├── cronjob.yaml
 │       └── kustomization.yaml
 ├── infra/
-│   ├── phoenix/               # Fase 1: tracing
+│   ├── phoenix/               # Phase 1: tracing
 │   │   ├── deployment.yaml    # Deployment + Service + PVC
 │   │   ├── ingress.yaml       # IngressRoute (phoenix.homelab.internal)
 │   │   └── kustomization.yaml
-│   ├── victoria-metrics/      # Fase 2: métricas de costo/heartbeat
+│   ├── victoria-metrics/      # Phase 2: cost/heartbeat metrics
 │   │   ├── deployment.yaml    # Deployment + Service + PVC
 │   │   ├── ingress.yaml       # IngressRoute (metrics.homelab.internal)
-│   │   ├── scrape.yml         # scrape_config hacia node-exporter
+│   │   ├── scrape.yml         # scrape_config targeting node-exporter
 │   │   └── kustomization.yaml
-│   ├── node-exporter/         # Fase 3: salud del node
+│   ├── node-exporter/         # Phase 3: node health
 │   │   ├── daemonset.yaml     # DaemonSet + Service
 │   │   └── kustomization.yaml
-│   └── pihole/                # DNS de toda la LAN
+│   └── pihole/                # DNS for the whole LAN
 │       ├── deployment.yaml    # Deployment (hostPort 53) + Service + PVC
 │       ├── ingress.yaml       # IngressRoute (pihole.homelab.internal)
 │       └── kustomization.yaml
 └── docs/
-    └── superpowers/specs/     # specs de diseño (ej. telemetría)
+    └── superpowers/specs/     # design specs (e.g. telemetry)
 ```
 
-Las `Application` de ArgoCD para `infra/*` no viven en este repo — se
-aplican a mano con `kubectl`, mismo patrón que `morning-digest`
-(`syncPolicy.automated.{prune,selfHeal}` + `CreateNamespace=true`). Es
-la misma decisión de "GitOps parcial, pragmático" que ya se tomó con
-los secrets.
+ArgoCD's `Application` resources for `infra/*` don't live in this repo —
+they're applied by hand with `kubectl`, the same pattern as
+`morning-digest` (`syncPolicy.automated.{prune,selfHeal}` +
+`CreateNamespace=true`). It's the same "partial, pragmatic GitOps"
+decision already made with secrets.
 
-## Qué sigue
+## What's next
 
-- [x] Timezone del sistema fijado a `America/Argentina/Buenos_Aires` para
-      que el CronJob dispare a la hora real esperada, no en UTC.
-- [x] Observabilidad (`infra/phoenix`, `infra/victoria-metrics`,
-      `infra/node-exporter`): tracing de cada corrida de agente
-      (Phoenix), métricas de costo/heartbeat por agente y salud del
-      node (VictoriaMetrics), todo fail-open — si la telemetría está
-      caída, el agente entrega igual. Detalle completo en
+- [x] System timezone pinned to `America/Argentina/Buenos_Aires` so the
+      CronJob fires at the actual expected time, not UTC.
+- [x] Observability (`infra/phoenix`, `infra/victoria-metrics`,
+      `infra/node-exporter`): tracing for every agent run (Phoenix),
+      cost/heartbeat metrics per agent, and node health
+      (VictoriaMetrics), all fail-open — if telemetry is down, the
+      agent still delivers. Full detail in
       `docs/superpowers/specs/2026-07-23-telemetria-design.md`.
-- [x] `infra/pihole`: DNS de toda la LAN con bloqueo de ads/tracking,
-      solo DNS (sin DHCP propio, el router sigue asignando IPs).
-- [x] `agents/watchdog`: segundo agente, alertas proactivas sobre disco,
-      memoria, load y salud de `morning-digest`, con máquina de estados
-      propia (pending → firing, histéresis, dedup) y sin LLM. Verificado
-      en vivo contra el cluster real.
-- [x] Tailscale: mesh WireGuard entre homelab, desktop y celular, con
-      SSH nativo (`--ssh`) y MagicDNS. Verificado sin conflicto con
-      Pi-hole (el 53 del pod es `hostPort`/DNAT, no un socket del host).
-- [ ] Decidir si el "Global nameserver" del tailnet apunta a la IP
-      Tailscale del homelab, para que el bloqueo de Pi-hole aplique
-      también al celular fuera de la LAN (datos móviles).
-- [ ] Más agentes bajo `agents/`, cada uno con su propia carpeta,
-      Dockerfile, y CronJob — el patrón ya está probado y se repite.
+- [x] `infra/pihole`: DNS for the whole LAN with ad/tracking blocking,
+      DNS only (no DHCP of its own, the router still assigns IPs).
+- [x] `agents/watchdog`: second agent, proactive alerts on disk,
+      memory, load, and `morning-digest` health, with its own state
+      machine (pending → firing, hysteresis, dedup) and no LLM.
+      Verified live against the real cluster.
+- [x] Tailscale: WireGuard mesh between homelab, desktop, and phone,
+      with native SSH (`--ssh`) and MagicDNS. Verified with no conflict
+      with Pi-hole (the pod's port 53 is `hostPort`/DNAT, not a host
+      socket).
+- [ ] Decide whether the tailnet's "Global nameserver" should point at
+      the homelab's Tailscale IP, so Pi-hole's blocking also applies to
+      the phone outside the LAN (mobile data).
+- [ ] More agents under `agents/`, each with its own folder, Dockerfile,
+      and CronJob — the pattern is already proven and repeats.
