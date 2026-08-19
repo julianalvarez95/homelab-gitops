@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: metrics-snapshot
+  namespace: default
+spec:
+  schedule: "*/15 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 2
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 60
+      template:
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          containers:
+          - name: metrics-snapshot
+            image: ghcr.io/julianalvarez95/metrics-snapshot:latest
+            imagePullPolicy: Always
+            envFrom:
+            - secretRef:
+                name: metrics-snapshot-secrets
+            env:
+            - name: VICTORIA_METRICS_URL
+              value: "http://victoria-metrics.observability.svc.cluster.local:8428/api/v1/import/prometheus"
+            - name: VICTORIA_METRICS_QUERY_URL
+              value: "http://victoria-metrics.observability.svc.cluster.local:8428/api/v1/query"
+            - name: METRICS_INGEST_URL
+              value: "https://agent-metrics-dashboard-mu.vercel.app/api/ingest"
+            # telegram.py reads these at import time for push_metrics, even
+            # though this agent never calls send_telegram — unused but
+            # required so the import doesn't KeyError.
+            - name: TELEGRAM_BOT_TOKEN
+              value: "unused"
+            - name: TELEGRAM_CHAT_ID
+              value: "unused"
