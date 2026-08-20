@@ -23,18 +23,29 @@ flowchart LR
     Dev["you"] -->|commit + push| Repo[("homelab-gitops\n(this repo)")]
     Repo -->|watch| ArgoCD
     ArgoCD -->|sync + self-heal| K3s["k3s on the Dell 7490"]
-    K3s --> Cron["CronJob: morning-digest"]
-    Cron -->|reads| RSS[("RSS feeds\ntech / product / business")]
-    Cron -->|summarizes with| LLM["OpenAI API"]
-    Cron -->|delivers via| TG["Telegram"]
-    Cron -.->|OTLP traces\nfail-open| Phoenix[("Phoenix")]
-    Cron -.->|HTTP metrics\nfail-open| VM[("VictoriaMetrics")]
+
+    subgraph Agents["4 agents, same GitOps loop"]
+        MD["morning-digest\nRSS → OpenAI → Telegram"]
+        OB["outreach-bot\nSheets → WhatsApp via Kapso"]
+        WD["watchdog\nVM rules → Telegram alerts"]
+        MS["metrics-snapshot\nVM → public dashboard"]
+    end
+
+    K3s --> MD
+    K3s --> OB
+    K3s --> WD
+    K3s --> MS
+
+    MD & OB & WD & MS -.->|OTLP traces\nfail-open| Phoenix[("Phoenix")]
+    MD & OB & WD & MS -.->|HTTP metrics\nfail-open| VM[("VictoriaMetrics")]
+    MS -.->|POST /api/ingest\nfail-open| Dash[("agent-metrics-dashboard\nVercel, public")]
 
     style Dev fill:#2d2d2d,color:#fff
     style ArgoCD fill:#ef7b4d,color:#fff
     style K3s fill:#326ce5,color:#fff
     style Phoenix fill:#6f42c1,color:#fff
     style VM fill:#c0392b,color:#fff
+    style Dash fill:#0f9d58,color:#fff
 ```
 
 If someone SSHes in and edits something by hand with `kubectl`, ArgoCD
@@ -110,6 +121,30 @@ flowchart TB
 The dashed lines are intentional: if Phoenix or VictoriaMetrics are
 down, the agent logs the error and continues — digest delivery never
 depends on telemetry being up.
+
+`metrics-snapshot` closes the loop on all that telemetry: every agent
+already writes its own health to VictoriaMetrics for the reasons above,
+and `metrics-snapshot` is just the one that reads all of it back out
+every 15 minutes and republishes it somewhere a browser can see it.
+
+```mermaid
+flowchart LR
+    MD["morning-digest"] -->|success, duration,\ntokens, heartbeat| VM[("VictoriaMetrics")]
+    OB["outreach-bot"] -->|+ contacts by status| VM
+    WD["watchdog"] -->|+ alert state| VM
+    MS["metrics-snapshot"] -->|+ its own heartbeat| VM
+
+    VM -->|read everyone's data\nevery 15 min| MS
+    MS -.->|POST /api/ingest\nX-Metrics-Secret, fail-open| Dash[("agent-metrics-dashboard\nVercel, public")]
+
+    style VM fill:#c0392b,color:#fff
+    style Dash fill:#0f9d58,color:#fff
+```
+
+Same fail-open rule as everywhere else in this repo: if the dashboard
+ingest fails, `metrics-snapshot` logs it and still reports its own
+`agent_run_success` to VictoriaMetrics — a flaky public dashboard can
+never look like a broken agent to `watchdog`.
 
 ## How it was built, in the actual order
 
