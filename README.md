@@ -495,7 +495,9 @@ ArgoCD's `Application` resources for `infra/*` don't live in this repo —
 they're applied by hand with `kubectl`, the same pattern as
 `morning-digest` (`syncPolicy.automated.{prune,selfHeal}` +
 `CreateNamespace=true`). It's the same "partial, pragmatic GitOps"
-decision already made with secrets.
+decision already made with secrets. `infra/argocd` only holds the
+`IngressRoute` for ArgoCD's own UI (`argocd.homelab.internal`), not the
+ArgoCD installation itself.
 
 ## What's next
 
