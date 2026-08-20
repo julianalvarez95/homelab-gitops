@@ -11,7 +11,7 @@
 | **OS** | Debian 13, minimal, no desktop environment |
 | **Orchestrator** | k3s (single node) + ArgoCD (self-heal on) |
 | **Golden rule** | The brains go over the API (OpenAI/Claude), the local iron only orchestrates |
-| **Agents running** | 2 — `morning-digest`, `watchdog` |
+| **Agents running** | 4 — `morning-digest`, `outreach-bot`, `watchdog`, `metrics-snapshot` |
 | **Observability** | Phoenix (tracing) + VictoriaMetrics (metrics) + node-exporter (node health) — all three, fail-open |
 | **Network** | Pi-hole — DNS for the whole LAN, with network-level ad/tracking blocking |
 | **Remote access** | Tailscale (WireGuard mesh) — homelab, desktop, and phone on the same tailnet, SSH without exposing ports on the router |
@@ -64,6 +64,8 @@ fighting against the hardware on hand.
 | **ArgoCD** | The operational heart. Watches this repo and applies any change to the cluster automatically, with self-heal enabled. |
 | **`agents/morning-digest`** | The first real agent: a daily CronJob that reads RSS feeds (tech, product, business), builds a summary with OpenAI grouped by topic, and sends it via Telegram with formatting (bold, bullets, a link per item). It also publishes those same items to [`digest-agent`](https://digest-agent.vercel.app) (an Eve agent on Vercel), which serves them to the [portfolio](https://github.com/julianalvarez95/portfolio-personal) — fail-open, same as tracing/metrics: if digest-agent is down it doesn't affect delivery via Telegram. Runs, summarizes, shuts down — nothing stays alive consuming RAM between runs. |
 | **`agents/watchdog`** | The second agent: a CronJob every 10 minutes that evaluates alert rules (disk, memory, load, `morning-digest` health) against VictoriaMetrics and notifies via Telegram only on real state changes — no LLM, with its own state machine (pending → firing, hysteresis, dedup) to avoid spamming. |
+| **`agents/outreach-bot`** | Legal outreach over WhatsApp via Kapso: a CronJob (`outreach-bot-sender`, weekdays 9am) sends messages sourced from Google Sheets, backed by a persistent `outreach-bot-webhook` Deployment (FastAPI/uvicorn) exposed through a Cloudflare Tunnel to receive replies. Design docs and rollout status live in [`outreach-bot-docs`](https://github.com/julianalvarez95/outreach-bot-docs) (private). |
+| **`agents/metrics-snapshot`** | A CronJob every 15 minutes that queries VictoriaMetrics for every other agent's health (last run timestamp, success, duration), 30-day LLM token usage, `watchdog`'s current alert states, and `outreach-bot` contact counts, bundles it into one snapshot, and publishes it to the public [agent-metrics dashboard](https://agent-metrics-dashboard-mu.vercel.app) via `POST /api/ingest`. Fail-open on that publish step, same as tracing/metrics elsewhere: if the dashboard ingest fails it's logged and swallowed, and the run still reports its own success/duration/heartbeat back to VictoriaMetrics like every other agent. |
 | **`infra/phoenix`** | Tracing for every agent run: RSS fetch → OpenAI call (with tokens) → Telegram delivery, as a single navigable end-to-end trace. |
 | **`infra/victoria-metrics`** | Cost metrics (tokens), duration, and heartbeat per agent, plus node health scraping. Short retention (10 days), sized for the ~12Gi of free disk the 7490 has. |
 | **`infra/node-exporter`** | Lightweight DaemonSet exposing the node's CPU/memory/disk so VictoriaMetrics can scrape them every 30s — before this, the only way to see those numbers was `kubectl top`, with no history. |
@@ -403,12 +405,34 @@ homelab-gitops/
 │   │   ├── feeds.yaml
 │   │   ├── cronjob.yaml
 │   │   └── kustomization.yaml
-│   └── watchdog/
+│   ├── watchdog/
+│   │   ├── src/
+│   │   │   ├── agent.py
+│   │   │   └── requirements.txt
+│   │   ├── Dockerfile
+│   │   ├── rules.yaml
+│   │   ├── cronjob.yaml
+│   │   └── kustomization.yaml
+│   ├── outreach-bot/
+│   │   ├── src/
+│   │   │   ├── webhook.py       # FastAPI app, receives Kapso replies
+│   │   │   ├── sender.py        # CronJob entrypoint
+│   │   │   ├── kapso_client.py
+│   │   │   ├── sheets_client.py
+│   │   │   ├── llm.py
+│   │   │   └── requirements.txt
+│   │   ├── cloudflared/
+│   │   │   └── deployment.yaml  # tunnel exposing the webhook
+│   │   ├── Dockerfile
+│   │   ├── cronjob.yaml         # outreach-bot-sender
+│   │   ├── deployment.yaml      # outreach-bot-webhook
+│   │   ├── service.yaml
+│   │   └── kustomization.yaml
+│   └── metrics-snapshot/
 │       ├── src/
 │       │   ├── agent.py
 │       │   └── requirements.txt
 │       ├── Dockerfile
-│       ├── rules.yaml
 │       ├── cronjob.yaml
 │       └── kustomization.yaml
 ├── infra/
